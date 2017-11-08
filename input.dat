@@ -1,0 +1,27 @@
+# PYTHONPATH must include directory above plugin directory.
+#     Define either externally or here, then import plugin.
+sys.path.insert(0, './..')
+import rtcc
+
+molecule {
+He
+He 1 0.6
+
+symmetry c1
+}
+
+set {
+  basis cc-pvdz
+  reference RHF
+  scf_type direct
+  mp2_type conv
+  e_convergence 1e-14
+}
+
+set rtcc {
+  print 1
+}
+
+energy('ccsd')
+rtcc.rtccsd('ccsd')
+rtcc.ccdiags('ccsd')

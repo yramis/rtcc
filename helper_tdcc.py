@@ -1,11 +1,10 @@
-#
 # @BEGIN LICENSE
 #
-# rtcc by Psi4 Developer, a plugin to:
+# RT-CC by Alexandre P. Bazante, a plugin to:
 #
 # Psi4: an open-source quantum chemistry software package
 #
-# Copyright (c) 2007-2017 The Psi4 Developers.
+# Copyright (c) 2007-2018 The Psi4 Developers.
 #
 # The copyrights for code used from other parties are included in
 # the corresponding files.
@@ -31,14 +30,13 @@
 #   Real-time explicitly time dependent Coupled-Cluster Code
 #       -- written by Alexandre P. Bazante, 2017
 #
-#       This assumes RHF reference
+#       This assumes RHF reference, and C1 symmetry
 #
 #       This is the main driver, which calls the individual steps and handles the various options
 #           The heavy work is done in:
-#               helper_cc       -> CC stuff
+#               helper_cc       -> CCSD equations, HBAR, Lambda equations, dipole moments
 #               helper_local    -> orbital localizations such as pipek mezey, PAO
 #               helper_prop     -> time propagation of the CC equations
-
 import sys
 import psi4
 import numpy as np
@@ -87,7 +85,7 @@ colors      = [red,green,yellow,blue,purple,cyan]
 
 print_data  = True
 localize    = False
-use_hbar    = True
+use_hbar    = True      # flag to be used later for some testing
 
 Print(blue+'\nTime Dependent CCSD Program'+end)
 Print(blue+'-- Written by Alexandre P. Bazante, 2017\n'+end)
@@ -98,6 +96,13 @@ numpy_memory = 2
 
 class rtcc(object):
     def __init__(self,memory=2):
+
+        psi4.set_module_options('SCF', {'SCF_TYPE':'PK'})
+        psi4.set_module_options('SCF', {'E_CONVERGENCE':1e-13})
+        psi4.set_module_options('SCF', {'D_CONVERGENCE':1e-13})
+
+        psi4.set_module_options('CCENERGY', {'E_CONVERGENCE':1e-16})
+        psi4.set_module_options('CCLAMBDA', {'R_CONVERGENCE':1e-16})
 
         mol = psi4.core.get_active_molecule()
         ccsd = CCEnergy(mol, memory=2)

@@ -1,32 +1,20 @@
 # Run this with:
 #   python input.py
 # Make sure helper files are in the same directory
+# Everything should work as intended if downloaded from github.com/yramis/rtcc
+#   If not, feel free to write me a strongly worded email for not keepting this repo up to date.
+
 import psi4
 from helper_tdcc import rtcc
 
 mol = psi4.geometry("""
-C	0.0000000	0.0000000	0.3155000
-C	0.0000000	1.2785390	-0.5246980
-C	0.0000000	-1.2785390	-0.5246980
-C	0.0000000	2.5499470	0.3253530
-C	0.0000000	-2.5499470	0.3253530
-H	0.8800700	0.0000000	0.9772380
-H	-0.8800700	0.0000000	0.9772380
-H	0.8794570	1.2767280	-1.1850860
-H	-0.8794570	1.2767280	-1.1850860
-H	-0.8794570	-1.2767280	-1.1850860
-H	0.8794570	-1.2767280	-1.1850860
-H	0.0000000	3.4504660	-0.3004240
-H	0.0000000	-3.4504660	-0.3004240
-H	-0.8860460	2.5890390	0.9714650
-H	0.8860460	2.5890390	0.9714650
-H	0.8860460	-2.5890390	0.9714650
-H	-0.8860460	-2.5890390	0.9714650
+O
+H 1 0.96
+H 1 0.96 2 104.5
 symmetry c1
 """)
 
 psi4.set_options({'basis': 'sto-3g'})
 psi4.set_options({'reference':'rhf'})
 
-psi4.energy('ccsd')
 rtcc()

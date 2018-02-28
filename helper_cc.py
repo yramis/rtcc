@@ -2,6 +2,7 @@ import time,sys
 import numpy as np
 from opt_einsum import contract
 from helper_ndot import ndot
+from helper_local import localize_occupied
 import psi4
 
 bold        = '\033[1m'
@@ -58,9 +59,6 @@ class CCEnergy(object):
 
         self.e_nuc = mol.nuclear_repulsion_energy()
 
-        psi4.set_module_options('SCF', {'SCF_TYPE':'PK'})
-        psi4.set_module_options('SCF', {'E_CONVERGENCE':10e-13})
-        psi4.set_module_options('SCF', {'D_CONVERGENCE':10e-13})
 
         self.e_scf,self.wfn = psi4.energy('scf',return_wfn=True)    # This makes psi4 run the scf calculation
         Print(blue+'The SCF energy is'+end)
@@ -83,7 +81,7 @@ class CCEnergy(object):
 
         self.C      = self.wfn.Ca_subset('AO','ALL')
         self.npC    = np.asarray(self.C)
-        #self.localize_occupied()
+        #localize_occupied(self)
 
         # Build AO density and fock matrix
         self.P = self.build_P()
@@ -149,21 +147,6 @@ class CCEnergy(object):
         F  -= ndot('ls,ulsv->uv',self.P,self.TEI_ao,prefactor=0.5)
         return F
 
-    def localize_occupied(self):    # Pipek mezey scheme
-        C_occ   = self.wfn.Ca_subset('AO','OCC')
-        basis   = self.wfn.basisset()
-        scheme  = psi4.core.Localizer.build("PIPEK_MEZEY",basis,C_occ)
-        psi4.core.Localizer.localize(scheme)
-        if scheme.converged:
-            Local_C = np.asarray(scheme.L)
-            U       = np.asarray(scheme.U)
-        # end PM localization
-        o = self.o
-        self.npC        = np.asarray(self.C)
-        self.npC[:,o]   = Local_C
-        self.C          = psi4.core.Matrix.from_array(self.npC)
-        return
-
 ##------------------------------------------------------
 ##  CCSD Procedures
 ##------------------------------------------------------
@@ -212,6 +195,7 @@ class CCEnergy(object):
         v = self.v
         
         Foo  = self.F[o,o].copy()
+        Foo += ndot('ke,ei->ik',self.t1,self.F[v,o],prefactor=0.5)
         Foo += ndot('me,kmie->ik',self.t1,self.V[o,o,o,v])
         Foo += ndot('imef,kmef->ik',self.build_tau_tilde(),self.TEI[o,o,v,v],prefactor=2)
         Foo += ndot('imef,kmfe->ik',self.build_tau_tilde(),self.TEI[o,o,v,v],prefactor=-1)
@@ -222,6 +206,7 @@ class CCEnergy(object):
         v = self.v
 
         Fvv  = self.F[v,v].copy()
+        Fvv -= ndot('mc,am->ca',self.t1,self.F[v,o],prefactor=0.5)
         Fvv += ndot('me,maec->ca',self.t1,self.V[o,v,v,v])
         Fvv -= ndot('mnae,mnce->ca',self.build_tau_tilde(),self.TEI[o,o,v,v],prefactor=2)
         Fvv -= ndot('mnae,mnec->ca',self.build_tau_tilde(),self.TEI[o,o,v,v],prefactor=-1)
@@ -231,7 +216,8 @@ class CCEnergy(object):
         o = self.o
         v = self.v
 
-        Fvo  = ndot('me,kmce->ck',self.t1,self.V[o,o,v,v])
+        Fvo  = self.F[v,o].copy()
+        Fvo += ndot('me,kmce->ck',self.t1,self.V[o,o,v,v])
         return Fvo      # Fme
 
 
@@ -295,7 +281,7 @@ class CCEnergy(object):
         Fvv = self.build_Fvv()
         Fvo = self.build_Fvo()
 
-        t1_new  = np.zeros((self.n_occ,self.n_virt))
+        t1_new  = self.F[o,v].copy()
         t1_new += ndot('ic,ca->ia',self.t1,Fvv)
         t1_new -= ndot('ka,ik->ia',self.t1,Foo)
         TS      = self.t2 + self.t2_aa
@@ -358,7 +344,7 @@ class CCEnergy(object):
         self.E_ccsd = e + self.e_scf
         return e
     
-    def compute_ccsd(self,e_conv=1e-13,maxiter=50,max_diis=8):
+    def compute_ccsd(self,maxiter=50,max_diis=8):
         ccsd_tstart = time.time()
         
         self.e_mp2 = self.compute_ccsd_energy()
@@ -376,6 +362,7 @@ class CCEnergy(object):
         diis_errors    = []
         diis_size      = 0
 
+        e_conv = psi4.core.get_option('CCENERGY','E_CONVERGENCE')
         # Iterate
         for iter in range(1,maxiter+1):
             t1_old = self.t1.copy()
@@ -498,22 +485,20 @@ class CCHbar(object):
         o = self.o
         v = self.v
 
-        #self.Hoo  = self.F[o,o].copy()
-        self.Hoo = np.zeros((self.n_occ,self.n_occ))
+        self.Hoo  = self.F[o,o].copy()
         self.Hoo += ndot('ie,ej->ij',self.t1,self.F[v,o])
-        self.Hoo += ndot('me,iejm->ij',self.t1,self.V[o,v,o,o])
-        self.Hoo += ndot('imef,efjm->ij',self.tau,self.V[v,v,o,o])
+        self.Hoo += ndot('me,jmie->ij',self.t1,self.V[o,o,o,v])
+        self.Hoo += ndot('imef,jmef->ij',self.tau,self.V[o,o,v,v])
         return self.Hoo
 
     def build_Hvv(self):
         o = self.o
         v = self.v
 
-        #self.Hvv  = self.F[v,v].copy()
-        self.Hvv = np.zeros((self.n_virt,self.n_virt))
+        self.Hvv  = self.F[v,v].copy()
         self.Hvv -= ndot('mb,am->ab',self.t1,self.F[v,o])
-        self.Hvv += ndot('me,aebm->ab',self.t1,self.V[v,v,v,o])
-        self.Hvv -= ndot('mnbe,aemn->ab',self.tau,self.V[v,v,o,o])
+        self.Hvv += ndot('me,mbea->ab',self.t1,self.V[o,v,v,v])
+        self.Hvv -= ndot('mnbe,mnae->ab',self.tau,self.V[o,o,v,v])
         return self.Hvv
 
     def build_Hvo(self):
@@ -521,7 +506,7 @@ class CCHbar(object):
         v = self.v
 
         self.Hvo  = self.F[v,o].copy()
-        self.Hvo += ndot('me,aeim->ai',self.t1,self.V[v,v,o,o])
+        self.Hvo += ndot('me,imae->ai',self.t1,self.V[o,o,v,v])
         return self.Hvo
 
     # 2-body hbar
@@ -531,9 +516,8 @@ class CCHbar(object):
         v = self.v
 
         self.Hoooo  = self.TEI[o,o,o,o].copy()
-        self.Hoooo += ndot('je,iekl->ijkl',self.t1,self.TEI[o,v,o,o],prefactor=2)     # check
-        #self.Hoooo += contract('ie,ejkl->ijkl',self.t1,self.TEI[v,o,o,o])
-        self.Hoooo += ndot('ijef,efkl->ijkl',self.tau,self.TEI[v,v,o,o])
+        self.Hoooo += ndot('je,klie->ijkl',self.t1,self.TEI[o,o,o,v],prefactor=2)
+        self.Hoooo += ndot('ijef,klef->ijkl',self.tau,self.TEI[o,o,v,v])
         return self.Hoooo
 
     def build_Hvvvv(self):  # alpha/beta/alpha/beta
@@ -541,9 +525,8 @@ class CCHbar(object):
         v = self.v
 
         self.Hvvvv  = self.TEI[v,v,v,v].copy()
-        #self.Hvvvv -= contract('mc,abmd->abcd',self.t1,self.TEI[v,v,v,o])     # check
-        self.Hvvvv -= ndot('md,abcm->abcd',self.t1,self.TEI[v,v,v,o],prefactor=2)
-        self.Hvvvv += ndot('mncd,abmn->abcd',self.tau,self.TEI[v,v,o,o])
+        self.Hvvvv -= ndot('md,mcba->abcd',self.t1,self.TEI[o,v,v,v],prefactor=2)
+        self.Hvvvv += ndot('mncd,mnab->abcd',self.tau,self.TEI[o,o,v,v])
         return self.Hvvvv
 
     def build_Hovov(self):
@@ -551,9 +534,9 @@ class CCHbar(object):
         v = self.v
 
         self.Hovov  = self.TEI[o,v,o,v].copy()
-        self.Hovov -= ndot('mb,iajm->iajb',self.t1,self.TEI[o,v,o,o])
-        self.Hovov += ndot('ie,eajb->iajb',self.t1,self.TEI[v,v,o,v]) 
-        self.Hovov -= ndot('imeb,eajm->iajb',self.tau,self.TEI[v,v,o,o])
+        self.Hovov -= ndot('mb,jmia->iajb',self.t1,self.TEI[o,o,o,v])
+        self.Hovov += ndot('ie,jbea->iajb',self.t1,self.TEI[o,v,v,v]) 
+        self.Hovov -= ndot('imeb,jmea->iajb',self.tau,self.TEI[o,o,v,v])
         return self.Hovov
 
     def build_Hovvo(self):  # alpha/beta/alpha/beta # exchange
@@ -561,10 +544,10 @@ class CCHbar(object):
         v = self.v
 
         self.Hovvo  = self.TEI[o,v,v,o].copy()
-        self.Hovvo -= ndot('ma,ibmj->ibaj',self.t1,self.TEI[o,v,o,o])
-        self.Hovvo += ndot('ie,ebaj->ibaj',self.t1,self.TEI[v,v,v,o])
-        self.Hovvo -= ndot('imea,ebmj->ibaj',self.tau,self.TEI[v,v,o,o])
-        self.Hovvo += ndot('imae,ebmj->ibaj',self.t2,self.V[v,v,o,o])
+        self.Hovvo -= ndot('ma,mjib->ibaj',self.t1,self.TEI[o,o,o,v])
+        self.Hovvo += ndot('ie,jabe->ibaj',self.t1,self.TEI[o,v,v,v])
+        self.Hovvo -= ndot('imea,mjeb->ibaj',self.tau,self.TEI[o,o,v,v])
+        self.Hovvo += ndot('imae,mjeb->ibaj',self.t2,self.V[o,o,v,v])
         return self.Hovvo
 
     # -1 excitation rank
@@ -573,7 +556,7 @@ class CCHbar(object):
         v = self.v
 
         self.Hovoo  = self.TEI[o,v,o,o].copy()
-        self.Hovoo += ndot('ke,eaij->kaij',self.t1,self.TEI[v,v,o,o])
+        self.Hovoo += ndot('ke,ijea->kaij',self.t1,self.TEI[o,o,v,v])
         return self.Hovoo
 
     def build_Hvvvo(self):  # alpha/beta/alpha/beta
@@ -581,7 +564,7 @@ class CCHbar(object):
         v = self.v
 
         self.Hvvvo  = self.TEI[v,v,v,o].copy()
-        self.Hvvvo -= ndot('mc,abmi->abci',self.t1,self.TEI[v,v,o,o])
+        self.Hvvvo -= ndot('mc,miab->abci',self.t1,self.TEI[o,o,v,v])
         return self.Hvvvo
 
     # +1 excitation rank
@@ -596,22 +579,22 @@ class CCHbar(object):
 
         self.Hooov += ndot('ijea,ek->ijka',self.t2,self.F[v,o])
 
-        self.Hooov += ndot('ijef,efka->ijka',self.tau,self.TEI[v,v,o,v])
-        self.Hooov -= ndot('imea,ejkm->ijka',self.tau,self.TEI[v,o,o,o])
-        self.Hooov -= ndot('jmea,iekm->ijka',self.tau,self.TEI[o,v,o,o])
-        self.Hooov += ndot('jmae,iekm->ijka',self.t2,self.V[o,v,o,o])
+        self.Hooov += ndot('ijef,kaef->ijka',self.tau,self.TEI[o,v,v,v])
+        self.Hooov -= ndot('imea,mkje->ijka',self.tau,self.TEI[o,o,o,v])
+        self.Hooov -= ndot('jmea,kmie->ijka',self.tau,self.TEI[o,o,o,v])
+        self.Hooov += ndot('jmae,kmie->ijka',self.t2,self.V[o,o,o,v])
 
-        tmp         = ndot('mf,efkm->ek',self.t1,self.V[v,v,o,o])
+        tmp         = ndot('mf,kmef->ek',self.t1,self.V[o,o,v,v])
         self.Hooov += ndot('ijea,ek->ijka',self.t2,tmp)
 
-        tmp         = ndot('ijef,efkm->ijkm',self.tau,self.TEI[v,v,o,o])
+        tmp         = ndot('ijef,kmef->ijkm',self.tau,self.TEI[o,o,v,v])
         self.Hooov -= ndot('ijkm,ma->ijka',tmp,self.t1)
 
-        tmp         = ndot('ie,efkm->ifkm',self.t1,self.V[v,v,o,o])
+        tmp         = ndot('ie,kmef->ifkm',self.t1,self.V[o,o,v,v])
         self.Hooov += ndot('jmaf,ifkm->ijka',self.t2,tmp)
-        tmp         = ndot('ie,efkm->ifkm',self.t1,self.TEI[v,v,o,o])
+        tmp         = ndot('ie,kmef->ifkm',self.t1,self.TEI[o,o,v,v])
         self.Hooov -= ndot('jmfa,ifkm->ijka',self.t2,tmp)
-        tmp         = ndot('jf,efkm->ejkm',self.t1,self.TEI[v,v,o,o])
+        tmp         = ndot('jf,kmef->ejkm',self.t1,self.TEI[o,o,v,v])
         self.Hooov -= ndot('imea,ejkm->ijka',self.t2,tmp)
         return self.Hooov
 
@@ -626,22 +609,22 @@ class CCHbar(object):
 
         self.Hvovv -= ndot('miab,cm->ciab',self.t2,self.F[v,o])
 
-        self.Hvovv += ndot('mnab,cimn->ciab',self.tau,self.TEI[v,o,o,o])
-        self.Hvovv -= ndot('miae,cemb->ciab',self.tau,self.TEI[v,v,o,v])
-        self.Hvovv -= ndot('mibe,ceam->ciab',self.tau,self.TEI[v,v,v,o])
-        self.Hvovv += ndot('mieb,ceam->ciab',self.t2,self.V[v,v,v,o])
+        self.Hvovv += ndot('mnab,nmic->ciab',self.tau,self.TEI[o,o,o,v])
+        self.Hvovv -= ndot('miae,mbce->ciab',self.tau,self.TEI[o,v,v,v])
+        self.Hvovv -= ndot('mibe,maec->ciab',self.tau,self.TEI[o,v,v,v])
+        self.Hvovv += ndot('mieb,maec->ciab',self.t2,self.V[o,v,v,v])
 
-        tmp         = ndot('ne,cemn->cm',self.t1,self.V[v,v,o,o])
+        tmp         = ndot('ne,mnce->cm',self.t1,self.V[o,o,v,v])
         self.Hvovv -= ndot('miab,cm->ciab',self.t2,tmp)
 
-        tmp         = ndot('mnab,cemn->ceab',self.tau,self.TEI[v,v,o,o])
+        tmp         = ndot('mnab,mnce->ceab',self.tau,self.TEI[o,o,v,v])
         self.Hvovv += ndot('ie,ceab->ciab',self.t1,tmp)
 
-        tmp         = ndot('ma,cemn->cean',self.t1,self.V[v,v,o,o])
+        tmp         = ndot('ma,mnce->cean',self.t1,self.V[o,o,v,v])
         self.Hvovv -= ndot('inbe,cean->ciab',self.t2,tmp)
-        tmp         = ndot('ma,cemn->cean',self.t1,self.TEI[v,v,o,o])
+        tmp         = ndot('ma,mnce->cean',self.t1,self.TEI[o,o,v,v])
         self.Hvovv += ndot('ineb,cean->ciab',self.t2,tmp)
-        tmp         = ndot('nb,cemn->cemb',self.t1,self.TEI[v,v,o,o])
+        tmp         = ndot('nb,mnce->cemb',self.t1,self.TEI[o,o,v,v])
         self.Hvovv += ndot('imea,cemb->ciab',self.t2,tmp)
         return self.Hvovv
 
@@ -661,12 +644,11 @@ class CCLambda(object):
         self.v      = ccsd.v
 
         self.TEI    = ccsd.TEI
-        self.F      = ccsd.F
+        #self.F      = ccsd.F
         self.Dia    = ccsd.Dia.swapaxes(0,1)
         self.Dijab  = ccsd.Dijab.swapaxes(0,2).swapaxes(1,3)
         self.t1     = ccsd.t1
         self.t2     = ccsd.t2
-        self.t2_aa  = ccsd.t2_aa
 
         # Antisymmetrize the TEI
         tmp         = self.TEI.copy()
@@ -750,14 +732,14 @@ class CCLambda(object):
         l2_new -= ndot('ebmi,maej->abij',self.l2,self.Hovvo)
         l2_new -= ndot('ebim,maje->abij',self.l2,self.Hovov)
 
-        l2_new -= ndot('ea,ebij->abij',Gvv,self.V[v,v,o,o])
-        l2_new += ndot('im,abmj->abij',Goo,self.V[v,v,o,o])
+        l2_new -= ndot('ea,ijeb->abij',Gvv,self.V[o,o,v,v])
+        l2_new += ndot('im,mjab->abij',Goo,self.V[o,o,v,v])
 
-        self.l1 = l1_new*self.Dia
+        self.l1 += l1_new*self.Dia
 
         tmp     = l2_new
         tmp     += l2_new.swapaxes(0,1).swapaxes(2,3)
-        self.l2 = tmp*self.Dijab
+        self.l2 += tmp*self.Dijab
 
         return
 
@@ -768,7 +750,7 @@ class CCLambda(object):
         e = ndot('abij,ijab->',self.l2,self.TEI[o,o,v,v],prefactor=0.5)
         return e
 
-    def compute_lambda(self,e_conv=1e-13,maxiter=50,max_diis=8):
+    def compute_lambda(self,maxiter=50,max_diis=8):
         lambda_tstart = time.time()
         e_ccsd_p = self.compute_pseudoenergy()
         
@@ -785,6 +767,7 @@ class CCLambda(object):
         diis_errors    = []
         diis_size      = 0
 
+        e_conv = psi4.core.get_option('CCLAMBDA','R_CONVERGENCE')
         # Iterate
         diis_size = 0
         for iter in range(1,maxiter+1):

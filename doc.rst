@@ -36,13 +36,13 @@
 Theory, Usage, and Notes
 ------------------------
 
-.. codeauthor:: Psi4 Developer
+.. codeauthor:: Alexandre P. Bazante
 .. sectionauthor:: Psi4 Developer
 
 Casual documentation for this plugin goes here.
 Uncomment the ``.. comment`` for some examples.
 
-.. comment * this plugin solves :math:`H=F_A+W_A+F_B+W_B+V`
+.. comment * this plugin solves the ccsd t and lambda amplitude equations
 .. comment * reference to keyword |globals__docc| and |rtcc__print|
 .. comment * returns :psivar:`CURRENT ENERGY <CURRENTENERGY>` in |kcalpermol|
 .. comment * operation depends on :envvar:`OMP_NUM_THREADS`.

@@ -1,4 +1,5 @@
 import time
+import json
 import numpy as np
 import cmath
 from helper_Print import Print
@@ -36,11 +37,25 @@ class RK4(object):
 
         self.mu = density.mu
 
+        data = {}
+        data['parameters'] = options
+        data['time']    = []
+        data['t1 (real part)']      = []
+        data['t1 (imag part)']      = []
+        data['t2 (real part)']      = []
+        data['t2 (imag part)']      = []
+        data['l1 (real part)']      = []
+        data['l1 (imag part)']      = []
+        data['l2 (real part)']      = []
+        data['l2 (imag part)']      = []
+        data['dipole (real part)']  = []
+        data['dipole (imag part)']  = []
+
         h = options['timestep']
         N = options['number of steps']
         T = options['timelength']
         t = 0.0
-        Print(blue+'{:>6s}{:8.4f}'.format('t =',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('mu (Real):',float(self.mu[2]),'mu (Imag):',float(self.mu[2].imag))+end)
+        Print(blue+'{:>6s}{:8.4f}'.format('t =',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('mu (Real):',self.mu[2],'mu (Imag):',self.mu[2].imag)+end)
 
         for i in range(N):
             t += h
@@ -52,7 +67,20 @@ class RK4(object):
 
             D = density.compute_ccsd_density(t1,t2,l1,l2)
             dipole = density.compute_ccsd_dipole(D)
-            Print(blue+'{:>6s}{:8.4f}'.format('t =',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('mu (Real):',float(dipole[2].real),'mu (Imag):',float(dipole[2].imag))+end)
+
+            data['time'].append(t)
+            data['t1 (real part)'].append(t1.real.tolist())
+            data['t1 (imag part)'].append(t1.imag.tolist())
+            data['t2 (real part)'].append(t2.real.tolist())
+            data['t2 (imag part)'].append(t2.imag.tolist())
+            data['l1 (real part)'].append(l1.real.tolist())
+            data['l1 (imag part)'].append(l1.imag.tolist())
+            data['l2 (real part)'].append(l2.real.tolist())
+            data['l2 (imag part)'].append(l2.imag.tolist())
+            data['dipole (real part)'].append(dipole[2].real)
+            data['dipole (imag part)'].append(dipole[2].imag)
+
+            Print(blue+'{:>6s}{:8.4f}'.format('t =',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('mu (Real):',dipole[2].real,'mu (Imag):',dipole[2].imag)+end)
 
             if time.time() > T:
                 Print(yellow+'\nEnd of propagation reached: time = %s seconds' %T+end)
@@ -60,6 +88,9 @@ class RK4(object):
 
         Print(yellow+'\n End of propagation reached: steps = %s' %N+end)
         Print(yellow+'\t time elapsed: time = %.1f seconds' %(time.time()-time_init)+end)
+
+        with open('data.txt','w') as outfile:
+            json.dump(data,outfile,indent=2)
 
     def Vt(self,t):
         # Field Parameters

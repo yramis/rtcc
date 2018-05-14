@@ -973,7 +973,7 @@ class CCDensity(object):
         Print(blue+'\tNuclear component (a.u.)'+end)
         Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles_nuc[0],'Y:',dipoles_nuc[1],'Z:',dipoles_nuc[2])+end)
         Print(blue+'\tElectronic component (a.u.)'+end)
-        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',float(dipoles[0]),'Y:',float(dipoles[1]),'Z:',float(dipoles[2]))+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
 
         self.mu = dipoles
 
@@ -1029,8 +1029,8 @@ class CCDensity(object):
         # Compute HF electronic dipole moments
         dipoles_elec = []
         for n in range(3):
-            mu  = ndot('uv,uv->',np.asarray(self.ints[n]),self.P)
-            dipoles_elec.append(float(mu))
+            mu  = ndot('uv,vu->',np.asarray(self.ints[n]),self.P)
+            dipoles_elec.append(mu)
 
         return dipoles_elec
 
@@ -1039,7 +1039,7 @@ class CCDensity(object):
         dipoles_elec = []
         for n in range(3):
             d = contract('ui,uv,vj->ij',self.npC,np.asarray(self.ints[n]),self.npC)
-            mu = ndot('ij,ij->',d,D)
+            mu = ndot('ij,ji->',d,D)
             dipoles_elec.append(mu)
 
         return dipoles_elec

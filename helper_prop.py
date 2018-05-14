@@ -58,8 +58,8 @@ class RK4(object):
                 Print(yellow+'\nEnd of propagation reached: time = %s seconds' %T+end)
                 break
 
-        Print(yellow+'\n End of propagation reached: steps = %s' %N)
-        Print('\t time elapsed: time = %.1f seconds' %(time.time()-time_init)+end)
+        Print(yellow+'\n End of propagation reached: steps = %s' %N+end)
+        Print(yellow+'\t time elapsed: time = %.1f seconds' %(time.time()-time_init)+end)
 
     def Vt(self,t):
         # Field Parameters

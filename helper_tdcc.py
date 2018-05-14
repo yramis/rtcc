@@ -30,19 +30,32 @@
 #   Real-time explicitly time dependent Coupled-Cluster Code
 #       -- written by Alexandre P. Bazante, 2017
 #
-#       This assumes RHF reference, and C1 symmetry
-#
-#       This is the main driver, which calls the individual steps and handles the various options
-#           The heavy work is done in:
-#               helper_cc       -> CCSD equations, HBAR, Lambda equations, dipole moments
-#               helper_local    -> orbital localizations such as pipek mezey, PAO
-#               helper_prop     -> time propagation of the CC equations
+
+"""
+This is the main rtcc driver, which calls the individual steps and handles the various options
+The heavy work is done in:
+    helper_ndot     -> contraction routine
+    helper_diis     -> DIIS procedure
+    helper_cc       -> CCSD equations, HBAR, Lambda equations, 1-PDM, dipole moments
+    helper_local    -> orbital localizations such as pipek mezey, PAO
+    helper_prop     -> time propagation of the CC equations
+
+This assumes RHF reference and C1 symmetry
+"""
+
+__authors__ = "Alexandre P. Bazante"
+__credits__ = [
+        "T.D. Crawford","Ashutosh Kumar","Alexandre P. Bazante"]
+
 import sys
 import psi4
 import numpy as np
+from helper_Print import Print
 from helper_cc import CCEnergy
 from helper_cc import CCHbar
 from helper_cc import CCLambda
+from helper_cc import CCDensity
+from helper_prop import RK4
 import contextlib
 import time
 
@@ -54,23 +67,6 @@ def printoptions(*args, **kwargs):      # This helps printing nice arrays
         yield
     finally:
         np.set_printoptions(**original)
-
-if sys.stdout.isatty():
-    def Print(obj):  # Wrapper to ensure the Printout is only colorized in real terminal
-        print(obj)
-        return
-else:
-    def Print(obj):
-        colorized = False
-        for color in colors:
-            if color in obj:
-                colorized = True
-        if colorized:
-            string = obj[5:-4]
-            print(string)
-        else:
-            print(obj)
-        return
 
 bold        = '\033[1m'
 underline   = '\033[4m'
@@ -107,8 +103,18 @@ class rtcc(object):
         mol = psi4.core.get_active_molecule()
         ccsd = CCEnergy(mol, memory=2)
         ccsd.compute_ccsd()
-        
+
         hbar = CCHbar(ccsd)
 
         Lambda = CCLambda(ccsd,hbar)
         Lambda.compute_lambda()
+
+        density = CCDensity(ccsd,Lambda)
+
+        options = {
+            'timestep'          : 0.0001,
+            'number of steps'   : 10,
+            'timelength'        : np.inf,
+            'field amplitude'   : 0.005,
+            'field frequency'   : 1}
+        td = RK4(ccsd,Lambda,density,options)

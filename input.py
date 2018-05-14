@@ -6,6 +6,8 @@
 
 import psi4
 from helper_tdcc import rtcc
+from opt_einsum import contract
+import numpy as np
 
 mol = psi4.geometry("""
 O

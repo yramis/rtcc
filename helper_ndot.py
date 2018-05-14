@@ -1,4 +1,5 @@
 import numpy as np
+import cmath
 
 # N dimensional dot
 # Like a mini DPD library

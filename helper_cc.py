@@ -1,4 +1,5 @@
 import time,sys
+import contextlib
 import numpy as np
 import cmath
 from opt_einsum import contract
@@ -7,6 +8,15 @@ from helper_ndot import ndot
 from helper_diis import helper_diis
 from helper_local import localize_occupied
 import psi4
+
+@contextlib.contextmanager
+def printoptions(*args, **kwargs):      # This helps printing nice arrays
+    original = np.get_printoptions()
+    np.set_printoptions(*args,**kwargs)
+    try:
+        yield
+    finally:
+        np.set_printoptions(**original)
 
 bold        = '\033[1m'
 underline   = '\033[4m'
@@ -40,8 +50,8 @@ class CCEnergy(object):
         # Read molecule data
         psi4.core.set_active_molecule(mol)
         N_atom  = mol.natom()
-        N_e     = int(sum(mol.Z(A) for A in range(N_atom))-mol.molecular_charge())
-        self.n_occ   = int(N_e / 2) # can also be read as self.wfn.doccpi()[0] after an scf instance
+        self.n_e     = int(sum(mol.Z(A) for A in range(N_atom))-mol.molecular_charge())
+        self.n_occ   = int(self.n_e / 2) # can also be read as self.wfn.doccpi()[0] after an scf instance
 
         self.e_nuc = mol.nuclear_repulsion_energy()
 
@@ -322,7 +332,7 @@ class CCEnergy(object):
         return
 
     # Split amplitude update into T1 and T2 functions (used for the time-propagation)
-    def update_t1(self,t1,t2,F):
+    def update_t1(self,F,t1,t2):
         o = self.o
         v = self.v
 
@@ -370,7 +380,7 @@ class CCEnergy(object):
 
         return t1
 
-    def update_t2(self,t1,t2,F):
+    def update_t2(self,F,t1,t2):
         o = self.o
         v = self.v
 
@@ -812,7 +822,7 @@ class CCLambda(object):
         return
 
     # Split amplitude update into T1 and T2 functions (used for the time-propagation)
-    def update_l1(self,hbar,t1,t2,l1,l2,F):
+    def update_l1(self,hbar,F,t1,t2,l1,l2):
         o = self.o
         v = self.v
 
@@ -844,7 +854,7 @@ class CCLambda(object):
         l1 = self.l1 + l1_new*self.Dia
         return l1
 
-    def update_l2(self,hbar,t1,t2,l1,l2,F):
+    def update_l2(self,hbar,F,t1,t2,l1,l2):
         o = self.o
         v = self.v
 
@@ -968,12 +978,31 @@ class CCDensity(object):
         mol = psi4.core.get_active_molecule()
         dipoles_nuc = mol.nuclear_dipole()
 
+        dipoles = self.compute_hf_dipole(self.P)
+        Print(blue+'Dipole moment computed at the HF level'+end)
+        Print(blue+'\tNuclear component (a.u.)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles_nuc[0],'Y:',dipoles_nuc[1],'Z:',dipoles_nuc[2])+end)
+        Print(blue+'\tElectronic component (a.u.)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
+        dipoles = np.asarray([dipoles[i] + dipoles_nuc[i] for i in range(3)])
+        Print(blue+'\tTotal electric dipole (a.u.)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
+        dipoles *= 1/0.393456
+        Print(blue+'\tTotal electric dipole (Debye)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}\n' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
+
         dipoles = self.compute_ccsd_dipole(D)
         Print(blue+'Dipole moment computed at the CCSD level'+end)
         Print(blue+'\tNuclear component (a.u.)'+end)
         Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles_nuc[0],'Y:',dipoles_nuc[1],'Z:',dipoles_nuc[2])+end)
         Print(blue+'\tElectronic component (a.u.)'+end)
         Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
+        dipoles = np.asarray([dipoles[i] + dipoles_nuc[i] for i in range(3)])
+        Print(blue+'\tTotal electric dipole (a.u.)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
+        dipoles *= 1/0.393456
+        Print(blue+'\tTotal electric dipole (Debye)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}\n' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
 
         self.mu = dipoles
 

@@ -22,7 +22,7 @@ colors      = [red,green,yellow,blue,purple,cyan]
 
 class RK4(object):
     def __init__(self,ccsd,Lambda,density,options,memory=2):
-        Print(yellow+"\n\nStarting time propagation with 4th order Runge Kutta...\n"+end)
+        Print(yellow+"\nStarting time propagation with 4th order Runge Kutta...\n"+end)
 
         # Start timer
         time_init = time.time()
@@ -36,6 +36,9 @@ class RK4(object):
         l2 = Lambda.l2.copy()
 
         self.mu = density.mu
+        D = density.compute_ccsd_density(t1,t2,l1,l2)
+        np.set_printoptions(precision=5,suppress=True)
+        self.check_trace(D,ccsd.n_e)
 
         data = {}
         data['parameters'] = options
@@ -59,13 +62,14 @@ class RK4(object):
 
         for i in range(N):
             t += h
-            t1 = t1 + self.ft1(t,h,ccsd,F,t1,t2,self.Vt)
-            t2 = t2 + self.ft2(t,h,ccsd,F,t1,t2,self.Vt)
+            t1 = t1 + self.ft1(ccsd,t,h,F,self.Vt,t1,t2)
+            t2 = t2 + self.ft2(ccsd,t,h,F,self.Vt,t1,t2)
             hbar = CCHbar(ccsd,F+self.Vt(t),t1,t2)
-            l1 = l1 + self.fl1(t,h,F,t1,t2,hbar,Lambda,l1,l2,self.Vt)
-            l2 = l2 + self.fl2(t,h,F,t1,t2,hbar,Lambda,l1,l2,self.Vt)
+            l1 = l1 + self.fl1(hbar,Lambda,t,h,F,self.Vt,t1,t2,l1,l2)
+            l2 = l2 + self.fl2(hbar,Lambda,t,h,F,self.Vt,t1,t2,l1,l2)
 
             D = density.compute_ccsd_density(t1,t2,l1,l2)
+            self.check_trace(D,ccsd.n_e)
             dipole = density.compute_ccsd_dipole(D)
 
             data['time'].append(t)
@@ -82,6 +86,12 @@ class RK4(object):
 
             Print(blue+'{:>6s}{:8.4f}'.format('t =',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('mu (Real):',dipole[2].real,'mu (Imag):',dipole[2].imag)+end)
 
+            if t>0 and round(t/h)%1000 == 0:      #write checkpoint
+                init = time.time()
+                with open('data.json','w') as outfile:
+                    json.dump(data,outfile,indent=2)
+                Print(yellow+'\n\t checkpoint: saving data to json in %.1f seconds\n' %(time.time()-init)+end)
+
             if time.time() > T:
                 Print(yellow+'\nEnd of propagation reached: time = %s seconds' %T+end)
                 break
@@ -89,7 +99,7 @@ class RK4(object):
         Print(yellow+'\n End of propagation reached: steps = %s' %N+end)
         Print(yellow+'\t time elapsed: time = %.1f seconds' %(time.time()-time_init)+end)
 
-        with open('data.txt','w') as outfile:
+        with open('data.json','w') as outfile:
             json.dump(data,outfile,indent=2)
 
     def Vt(self,t):
@@ -99,33 +109,44 @@ class RK4(object):
 
         # Select z-direction dipole moment
         mu = self.mu[2]
-        V = -A*mu*np.exp(1j*w*2*np.pi*t)
-        return V
+        V = -A*mu*np.exp(1j*w*np.pi*t)
+        if t<=0.5/w:
+            #return V
+            return 0.0 + 0j
+        else:
+            return 0.0 + 0j
 
-    def ft1(self,t,h,ccsd,F,t1,t2,Vt):
-        k1 = ccsd.update_t1(t1          ,t2,F+Vt(t))
-        k2 = ccsd.update_t1(t1+h*k1/2.0 ,t2,F+Vt(t+h/2.0))
-        k3 = ccsd.update_t1(t1+h*k2/2.0 ,t2,F+Vt(t+h/2.0))
-        k4 = ccsd.update_t1(t1+h*k3     ,t2,F+Vt(t+h))
+    def ft1(self,ccsd,t,h,F,Vt,t1,t2):
+        k1 = ccsd.update_t1(F + Vt(t),          t1,             t2)
+        k2 = ccsd.update_t1(F + Vt(t+h/2.0),    t1 + h*k1/2.0,  t2)
+        k3 = ccsd.update_t1(F + Vt(t+h/2.0),    t1 + h*k2/2.0,  t2)
+        k4 = ccsd.update_t1(F + Vt(t+h),        t1 + h*k3,      t2)
         return (k1 + 2*k2 + 2*k3 + k4)*h/6.0
 
-    def ft2(self,t,h,ccsd,F,t1,t2,Vt):
-        k1 = ccsd.update_t2(t1,t2               ,F+Vt(t))
-        k2 = ccsd.update_t2(t1,t2 + h*k1/2.0    ,F+Vt(t+h/2.0))
-        k3 = ccsd.update_t2(t1,t2 + h*k2/2.0    ,F+Vt(t+h/2.0))
-        k4 = ccsd.update_t2(t1,t2 + h*k3        ,F+Vt(t+h))
+    def ft2(self,ccsd,t,h,F,Vt,t1,t2):
+        k1 = ccsd.update_t2(F + Vt(t),          t1, t2)
+        k2 = ccsd.update_t2(F + Vt(t+h/2.0),    t1, t2 + h*k1/2.0)
+        k3 = ccsd.update_t2(F + Vt(t+h/2.0),    t1, t2 + h*k2/2.0)
+        k4 = ccsd.update_t2(F + Vt(t+h),        t1, t2 + h*k3)
         return (k1 + 2*k2 + 2*k3 + k4)*h/6.0
 
-    def fl1(self,t,h,F,t1,t2,hbar,Lambda,l1,l2,Vt):
-        k1 = Lambda.update_l1(hbar,t1,t2,l1          ,l2,F+Vt(t))
-        k2 = Lambda.update_l1(hbar,t1,t2,l1+h*k1/2.0 ,l2,F+Vt(t+h/2.0))
-        k3 = Lambda.update_l1(hbar,t1,t2,l1+h*k2/2.0 ,l2,F+Vt(t+h/2.0))
-        k4 = Lambda.update_l1(hbar,t1,t2,l1+h*k3     ,l2,F+Vt(t+h))
+    def fl1(self,hbar,Lambda,t,h,F,Vt,t1,t2,l1,l2):
+        k1 = Lambda.update_l1(hbar, F + Vt(t),          t1,t2,  l1,             l2)
+        k2 = Lambda.update_l1(hbar, F + Vt(t+h/2.0),    t1,t2,  l1 + h*k1/2.0,  l2)
+        k3 = Lambda.update_l1(hbar, F + Vt(t+h/2.0),    t1,t2,  l1 + h*k2/2.0,  l2)
+        k4 = Lambda.update_l1(hbar, F + Vt(t+h),        t1,t2,  l1 + h*k3,      l2)
         return (k1 + 2*k2 + 2*k3 + k4)*h/6.0
 
-    def fl2(self,t,h,F,t1,t2,hbar,Lambda,l1,l2,Vt):
-        k1 = Lambda.update_l2(hbar,t1,t2,l1,l2               ,F+Vt(t))
-        k2 = Lambda.update_l2(hbar,t1,t2,l1,l2 + h*k1/2.0    ,F+Vt(t+h/2.0))
-        k3 = Lambda.update_l2(hbar,t1,t2,l1,l2 + h*k2/2.0    ,F+Vt(t+h/2.0))
-        k4 = Lambda.update_l2(hbar,t1,t2,l1,l2 + h*k3        ,F+Vt(t+h))
+    def fl2(self,hbar,Lambda,t,h,F,Vt,t1,t2,l1,l2):
+        k1 = Lambda.update_l2(hbar, F + Vt(t),          t1,t2,l1,   l2)
+        k2 = Lambda.update_l2(hbar, F + Vt(t+h/2.0),    t1,t2,l1,   l2 + h*k1/2.0)
+        k3 = Lambda.update_l2(hbar, F + Vt(t+h/2.0),    t1,t2,l1,   l2 + h*k2/2.0)
+        k4 = Lambda.update_l2(hbar, F + Vt(t+h),        t1,t2,l1,   l2 + h*k3)
         return (k1 + 2*k2 + 2*k3 + k4)*h/6.0
+
+    def check_trace(self,M,t):
+        trace = np.trace(M).real
+        if trace-t>1e-14: 
+            Print(red+'Warning: Trace of density matrix deviated from expected value'+end)
+            print(trace)
+        return

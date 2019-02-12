@@ -11,20 +11,25 @@ cyan        = '\033[96m'
 end         = '\033[0m'
 colors      = [red,green,yellow,blue,purple,cyan]
 
-if sys.stdout.isatty():
-    def Print(obj):  # Wrapper to ensure the Printout is only colorized in real terminal
+if sys.stdout.isatty():     # Wrapper to ensure the Printout is only colorized in real terminal
+    def Print(obj):
         print(obj)
         return
 else:
     def Print(obj):
+        # Check for color applied to whole line
         colorized = False
         for color in colors:
             if color in obj:
                 colorized = True
         if colorized:
             string = obj[5:-4]
-            print(string)
+            # Check if second color applied
+            for color2 in colors:
+                if color2 in string:
+                    string = string.replace(color2,'')
+            print(string,flush=True)
         else:
-            print(obj)
+            print(obj,flush=True)
         return
 

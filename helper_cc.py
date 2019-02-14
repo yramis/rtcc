@@ -122,11 +122,11 @@ class CCEnergy(object):
         self.Dia    = 1/(eps[self.o].reshape(-1,1) - eps[self.v])
         self.Dijab  = 1/(eps[self.o].reshape(-1,1,1,1) + eps[self.o].reshape(-1,1,1) - eps[self.v].reshape(-1,1) - eps[self.v])
 
-        # Build MBPT(2) initial guess
+        # Build MBPT(2) initial guess (complex)
         Print(yellow+"\n..Building CCSD initial guess from MBPT(2) amplitudes...")
 
-        self.t1 = np.zeros((self.n_occ,self.n_virt))                    # t1 (ia)   <- 0
-        self.t2 = self.TEI[self.o,self.o,self.v,self.v] * self.Dijab    # t2 (iJaB) <- (ia|JB) * D(iJaB)
+        self.t1 = np.zeros((self.n_occ,self.n_virt)) + 1j*0.0                   # t1 (ia)   <- 0
+        self.t2 = self.TEI[self.o,self.o,self.v,self.v] * self.Dijab + 1j*0.0   # t2 (iJaB) <- (ia|JB) * D(iJaB)
         self.t2_aa = self.t2 - self.t2.swapaxes(0,1)
 
         Print(yellow+"\n..Initialized CCSD in %.3f seconds." %(time.time() - time_init)+end)
@@ -190,7 +190,7 @@ class CCEnergy(object):
         o = self.o
         v = self.v
         
-        Foo  = self.F[o,o].copy()
+        Foo  = self.F[o,o].copy() + 1j*0.0
         Foo += ndot('ke,ei->ik',self.t1,self.F[v,o],prefactor=0.5)
         Foo += ndot('me,kmie->ik',self.t1,self.V[o,o,o,v])
         Foo += ndot('imef,kmef->ik',self.build_tau_tilde(),self.TEI[o,o,v,v],prefactor=2)
@@ -201,7 +201,7 @@ class CCEnergy(object):
         o = self.o
         v = self.v
 
-        Fvv  = self.F[v,v].copy()
+        Fvv  = self.F[v,v].copy() + 1j*0.0
         Fvv -= ndot('mc,am->ca',self.t1,self.F[v,o],prefactor=0.5)
         Fvv += ndot('me,maec->ca',self.t1,self.V[o,v,v,v])
         Fvv -= ndot('mnae,mnce->ca',self.build_tau_tilde(),self.TEI[o,o,v,v],prefactor=2)
@@ -212,7 +212,7 @@ class CCEnergy(object):
         o = self.o
         v = self.v
 
-        Fvo  = self.F[v,o].copy()
+        Fvo  = self.F[v,o].copy() + 1j*0.0
         Fvo += ndot('me,kmce->ck',self.t1,self.V[o,o,v,v])
         return Fvo      # Fme
 
@@ -277,7 +277,7 @@ class CCEnergy(object):
         Fvv = self.build_Fvv()
         Fvo = self.build_Fvo()
 
-        t1_new  = self.F[o,v].copy()
+        t1_new  = self.F[o,v].copy() + 1j*0.0
         t1_new += ndot('ic,ca->ia',self.t1,Fvv)
         t1_new -= ndot('ka,ik->ia',self.t1,Foo)
         TS      = self.t2 + self.t2_aa
@@ -291,7 +291,7 @@ class CCEnergy(object):
 
         t1_new -= ndot('klac,klic->ia',self.t2_aa,self.VS[o,o,o,v],prefactor=0.5)
         t1_new -= ndot('klac,klic->ia',self.t2,self.TEI[o,o,o,v])
-        
+
         tau     = self.build_tau()
         tau1    = self.build_tau_tilde()
         Woooo   = self.build_Woooo()
@@ -300,7 +300,7 @@ class CCEnergy(object):
         Wvoov_aa= self.build_Wvoov('aa')
         Wvovo   = self.build_Wvovo()
 
-        t2_new  = self.TEI[o,o,v,v].copy()
+        t2_new  = self.TEI[o,o,v,v].copy() + 1j*0.0
 
         t2_new += ndot('klab,ijkl->ijab',tau,Woooo)
 
@@ -332,14 +332,15 @@ class CCEnergy(object):
         return
 
     # Split amplitude update into T1 and T2 functions (used for the time-propagation)
+    # Note that this compute the whole <Q|exp(-T) H exp(T)|0>, unlike update(self)
     def update_t1(self,F,t1,t2):
         o = self.o
         v = self.v
 
         # Save current t1,t2,F
-        t1_saved = self.t1.copy()
-        t2_saved = self.t2.copy()
-        F_saved  = self.F.copy()
+        #t1_saved = self.t1.copy()
+        #t2_saved = self.t2.copy()
+        #F_saved  = self.F.copy()
 
         # overwrite with input
         self.t1 = t1.copy()
@@ -353,7 +354,7 @@ class CCEnergy(object):
         Fvo = self.build_Fvo()
 
         # Solve T1 equation
-        t1_new  = self.F[o,v].copy()
+        t1_new  = self.F[o,v].copy() + 1j*0.0
         t1_new += ndot('ic,ca->ia',self.t1,Fvv)
         t1_new -= ndot('ka,ik->ia',self.t1,Foo)
         TS      = self.t2 + self.t2_aa
@@ -367,8 +368,6 @@ class CCEnergy(object):
 
         t1_new -= ndot('klac,klic->ia',self.t2_aa,self.VS[o,o,o,v],prefactor=0.5)
         t1_new -= ndot('klac,klic->ia',self.t2,self.TEI[o,o,o,v])
-        
-        t1 = self.t1 + t1_new*self.Dia
 
         # restore saved values
         #self.t1 = t1_saved.copy()
@@ -378,16 +377,49 @@ class CCEnergy(object):
         #del t2_saved
         #del F_saved
 
-        return t1
+        return t1_new
+
+    def residual_t1(self,F,t1,t2):
+        o = self.o
+        v = self.v
+
+        t2_aa   = t2 - t2.swapaxes(2,3)
+
+        #Build 1 particle intermediates
+        Foo = self.build_Foo()
+        Fvv = self.build_Fvv()
+        Fvo = self.build_Fvo()
+
+        # Solve T1 equation
+        r_t1    = F[o,v].copy() + 1j*0.0
+        r_t1   += ndot('ic,ca->ia',t1,Fvv)
+        r_t1   -= ndot('ka,ik->ia',t1,Foo)
+        TS      = t2 + t2_aa
+        r_t1   += ndot('ikac,ck->ia',TS,Fvo)
+
+        r_t1   += ndot('ld,ladi->ia',t1,self.TEI[o,v,v,o],prefactor=2)
+        r_t1   += ndot('ld,laid->ia',t1,self.TEI[o,v,o,v],prefactor=-1)
+
+        r_t1   += ndot('ikcd,kadc->ia',t2,self.TEI[o,v,v,v],prefactor=2)
+        r_t1   += ndot('ikdc,kadc->ia',t2,self.TEI[o,v,v,v],prefactor=-1)
+
+        r_t1   -= ndot('klac,klic->ia',t2_aa,self.VS[o,o,o,v],prefactor=0.5)
+        r_t1   -= ndot('klac,klic->ia',t2,self.TEI[o,o,o,v])
+
+        r_t1   -= t1*self.Dia
+
+        return r_t1
+
+
 
     def update_t2(self,F,t1,t2):
         o = self.o
         v = self.v
 
         # Save current t1,t2,F
-        t1_saved = self.t1.copy()
-        t2_saved = self.t2.copy()
-        F_saved  = self.F.copy()
+        #t1_saved = self.t1.copy()
+        #t2_saved = self.t2.copy()
+        #F_saved  = self.F.copy()
 
         # overwrite with input
         self.t1 = t1.copy()
@@ -410,7 +442,7 @@ class CCEnergy(object):
         Wvovo   = self.build_Wvovo()
 
         # Solve T2 equation
-        t2_new  = self.TEI[o,o,v,v].copy()
+        t2_new  = self.TEI[o,o,v,v].copy() + 1j*0.0
         t2_new  = t2_new + ndot('klab,ijkl->ijab',tau,Woooo)
         t2_new += ndot('ijcd,cdab->ijab',tau,self.TEI[v,v,v,v])
         t2_new -= ndot('lb,ijal->ijab',self.t1,Z)
@@ -432,8 +464,6 @@ class CCEnergy(object):
         t2_new -= contract('jc,ka,ickb->ijab',self.t1,self.t1,self.TEI[o,v,o,v])
         t2_new -= contract('jc,kb,cika->ijab',self.t1,self.t1,self.TEI[v,o,o,v])
 
-        t2 = self.t2 + t2_new*self.Dijab
-
         # restore saved values
         #self.t1 = t1_saved.copy()
         #self.t2 = t2_saved.copy()
@@ -442,12 +472,12 @@ class CCEnergy(object):
         #del t2_saved
         #del F_saved
 
-        return t2
+        return t2_new
 
     def compute_ccsd_energy(self):
         o = self.o
         v = self.v
-        e = ndot('ijab,abij->',self.build_tau(),self.V[v,v,o,o])
+        e = ndot('ijab,abij->',self.build_tau(),self.V[v,v,o,o]).real
         self.e_ccsd = e
         self.E_ccsd = e + self.e_scf
         return e
@@ -822,11 +852,10 @@ class CCLambda(object):
         return
 
     # Split amplitude update into T1 and T2 functions (used for the time-propagation)
-    def update_l1(self,hbar,F,t1,t2,l1,l2):
+    def update_l1(self,hbar,t1,t2,l1,l2):
         o = self.o
         v = self.v
 
-        self.F  = F.copy()
         self.t1 = t1.copy()
         self.t2 = t2.copy()
         self.l1 = l1.copy()
@@ -851,14 +880,12 @@ class CCLambda(object):
         l1_new += ndot('mn,mani->ai',Goo,hbar.Hovoo,prefactor=2)
         l1_new -= ndot('mn,main->ai',Goo,hbar.Hovoo)
 
-        l1 = self.l1 + l1_new*self.Dia
-        return l1
+        return l1_new
 
-    def update_l2(self,hbar,F,t1,t2,l1,l2):
+    def update_l2(self,hbar,t1,t2,l1,l2):
         o = self.o
         v = self.v
 
-        self.F  = F.copy()
         self.t1 = t1.copy()
         self.t2 = t2.copy()
         self.l1 = l1.copy()
@@ -891,16 +918,13 @@ class CCLambda(object):
         l2_new -= ndot('ea,ijeb->abij',Gvv,self.V[o,o,v,v])
         l2_new += ndot('im,mjab->abij',Goo,self.V[o,o,v,v])
 
-        tmp     = l2_new
-        tmp     += l2_new.swapaxes(0,1).swapaxes(2,3)
-        l2 = self.l2 +  tmp*self.Dijab
-        return l2
+        return l2_new
 
     def compute_pseudoenergy(self):
         o = self.o
         v = self.v
         
-        e = ndot('abij,ijab->',self.l2,self.TEI[o,o,v,v],prefactor=0.5)
+        e = ndot('abij,ijab->',self.l2,self.TEI[o,o,v,v],prefactor=0.5).real
         return e
 
     def compute_lambda(self,maxiter=50,max_diis=8,start_diis=1):
@@ -965,11 +989,11 @@ class CCDensity(object):
         self.P      = ccsd.P
         self.npC    = ccsd.npC
 
-        self.t1     = ccsd.t1
-        self.t2     = ccsd.t2
+        self.t1     = ccsd.t1.real
+        self.t2     = ccsd.t2.real
 
-        self.l1     = Lambda.l1     # holds 2*lambda_a,i
-        self.l2     = Lambda.l2     # holds 2*(2*lambda_ab,ij - lambda_ab,ji)
+        self.l1     = Lambda.l1.real     # holds 2*lambda_a,i
+        self.l2     = Lambda.l2.real     # holds 2*(2*lambda_ab,ij - lambda_ab,ji)
 
         D = self.compute_ccsd_density(self.t1,self.t2,self.l1,self.l2)
         Print(yellow+"\n..Density constructed in %.3f seconds\n" %(time.time()-time_init)+end)
@@ -985,10 +1009,10 @@ class CCDensity(object):
         Print(blue+'\tElectronic component (a.u.)'+end)
         Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
         dipoles = np.asarray([dipoles[i] + dipoles_nuc[i] for i in range(3)])
-        Print(blue+'\tTotal electric dipole (a.u.)'+end)
+        Print(green+'\tTotal electric dipole (a.u.)'+end)
         Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
         dipoles *= 1/0.393456
-        Print(blue+'\tTotal electric dipole (Debye)'+end)
+        Print(green+'\tTotal electric dipole (Debye)'+end)
         Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}\n' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
 
         dipoles = self.compute_ccsd_dipole(D)
@@ -997,14 +1021,14 @@ class CCDensity(object):
         Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles_nuc[0],'Y:',dipoles_nuc[1],'Z:',dipoles_nuc[2])+end)
         Print(blue+'\tElectronic component (a.u.)'+end)
         Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
+        self.mu = dipoles.copy()
         dipoles = np.asarray([dipoles[i] + dipoles_nuc[i] for i in range(3)])
-        Print(blue+'\tTotal electric dipole (a.u.)'+end)
+        Print(green+'\tTotal electric dipole (a.u.)'+end)
         Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
         dipoles *= 1/0.393456
-        Print(blue+'\tTotal electric dipole (Debye)'+end)
+        Print(green+'\tTotal electric dipole (Debye)'+end)
         Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}\n' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
 
-        self.mu = dipoles
 
     def build_Doo(self,t1,t2,l1,l2):
         o = self.o
@@ -1020,7 +1044,6 @@ class CCDensity(object):
 
         self.Dvv  = ndot('ka,bk->ab',t1,l1)
         self.Dvv += ndot('klca,cbkl->ab',t2,l2)
-
         return self.Dvv
 
     def build_Dov(self,t1,t2,l1,l2):
@@ -1051,7 +1074,6 @@ class CCDensity(object):
         D = np.zeros((nmo,nmo))
         D[:n_occ,:n_occ] = 2*np.eye(n_occ)                          # HF MO density
         D = D + D_corr
-
         return D
 
     def compute_hf_dipole(self,P):
@@ -1060,7 +1082,6 @@ class CCDensity(object):
         for n in range(3):
             mu  = ndot('uv,vu->',np.asarray(self.ints[n]),self.P)
             dipoles_elec.append(mu)
-
         return dipoles_elec
 
     def compute_ccsd_dipole(self,D):
@@ -1070,5 +1091,4 @@ class CCDensity(object):
             d = contract('ui,uv,vj->ij',self.npC,np.asarray(self.ints[n]),self.npC)
             mu = ndot('ij,ji->',d,D)
             dipoles_elec.append(mu)
-
         return dipoles_elec

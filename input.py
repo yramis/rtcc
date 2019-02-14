@@ -10,13 +10,11 @@ from opt_einsum import contract
 import numpy as np
 
 mol = psi4.geometry("""
-O
-H 1 0.96
-H 1 0.96 2 104.5
+He
 symmetry c1
 """)
 
-psi4.set_options({'basis': 'sto-3g'})
+psi4.set_options({'basis': 'cc-pVDZ'})
 psi4.set_options({'reference':'rhf'})
 
 rtcc()
@@ -31,3 +29,4 @@ rtcc()
 #print(D)
 #print('trace')
 #print(np.trace(D))
+# Water SCF/cc-pVDZ Single Point Energy

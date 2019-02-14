@@ -58,6 +58,7 @@ from helper_cc import CCDensity
 from helper_prop import RK4
 import contextlib
 import time
+from opt_einsum import contract
 
 @contextlib.contextmanager
 def printoptions(*args, **kwargs):      # This helps printing nice arrays
@@ -112,9 +113,9 @@ class rtcc(object):
         density = CCDensity(ccsd,Lambda)
 
         options = {
-            'timestep'          : 0.0001,
-            'number of steps'   : 3000,
+            'timestep'          : 0.1,
+            'number of steps'   : 1000,
             'timelength'        : np.inf,
-            'field amplitude'   : 0.005,
-            'field frequency'   : 20}
+            'field amplitude'   : 0.002,
+            'field frequency'   : 0.5}
         td = RK4(ccsd,Lambda,density,options)

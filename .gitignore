@@ -1,0 +1,21 @@
+# GitIgnore File
+
+# Folders
+inputs/
+timings/
+t2_sparsity/
+previous_versions/
+
+# Calculation generated files
+timer.dat
+output.dat
+__pycache__
+*.out
+data.json
+
+#Swap files
+.DS_store
+
+# Others
+ode.py
+plot.py

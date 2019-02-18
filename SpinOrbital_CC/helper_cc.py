@@ -5,8 +5,6 @@ import cmath
 from opt_einsum import contract
 from helper_Print import Print
 from helper_ndot import ndot
-from helper_diis import helper_diis
-from helper_local import localize_occupied
 import psi4
 
 @contextlib.contextmanager
@@ -63,7 +61,6 @@ class CCEnergy(object):
         self.memory = memory
         self.nmo    = self.wfn.nmo()
         self.n_virt = self.nmo - self.n_occ
-
         # Make slices
         self.o = slice(self.n_occ)
         self.v = slice(self.n_occ,self.nmo)

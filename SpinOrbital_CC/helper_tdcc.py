@@ -44,18 +44,17 @@ This assumes RHF reference and C1 symmetry
 """
 
 __authors__ = "Alexandre P. Bazante"
-__credits__ = [
-        "T.D. Crawford","Ashutosh Kumar","Alexandre P. Bazante"]
+__credits__ = ["T.D. Crawford","Ashutosh Kumar","Alexandre P. Bazante"]
 
 import sys
 import psi4
 import numpy as np
 from helper_Print import Print
 from helper_cc import CCEnergy
-from helper_cc import CCHbar
-from helper_cc import CCLambda
-from helper_cc import CCDensity
-from helper_prop import RK4
+#from helper_cc import CCHbar
+#from helper_cc import CCLambda
+#from helper_cc import CCDensity
+#from helper_prop import RK4
 import contextlib
 import time
 from opt_einsum import contract
@@ -105,12 +104,12 @@ class rtcc(object):
         ccsd = CCEnergy(mol, memory=2)
         ccsd.compute_ccsd()
 
-        hbar = CCHbar(ccsd)
+        #hbar = CCHbar(ccsd)
 
-        Lambda = CCLambda(ccsd,hbar)
-        Lambda.compute_lambda()
+        #Lambda = CCLambda(ccsd,hbar)
+        #Lambda.compute_lambda()
 
-        density = CCDensity(ccsd,Lambda)
+        #density = CCDensity(ccsd,Lambda)
 
         options = {
             'timestep'          : 0.1,

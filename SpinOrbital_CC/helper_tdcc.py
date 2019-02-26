@@ -53,7 +53,7 @@ import numpy as np
 from helper_Print import Print
 from helper_cc import CCEnergy
 from helper_cc import CCLambda
-#from helper_cc import CCDensity
+from helper_cc import CCProperties
 from helper_prop import RK4
 import contextlib
 import time
@@ -94,11 +94,11 @@ class rtcc(object):
     def __init__(self,memory=2):
 
         psi4.set_module_options('SCF', {'SCF_TYPE':'PK'})
-        psi4.set_module_options('SCF', {'E_CONVERGENCE':1e-12})
-        psi4.set_module_options('SCF', {'D_CONVERGENCE':1e-12})
+        psi4.set_module_options('SCF', {'E_CONVERGENCE':1e-14})
+        psi4.set_module_options('SCF', {'D_CONVERGENCE':1e-14})
 
-        psi4.set_module_options('CCENERGY', {'E_CONVERGENCE':1e-12})
-        psi4.set_module_options('CCLAMBDA', {'R_CONVERGENCE':1e-12})
+        psi4.set_module_options('CCENERGY', {'E_CONVERGENCE':1e-14})
+        psi4.set_module_options('CCLAMBDA', {'R_CONVERGENCE':1e-14})
 
         mol = psi4.core.get_active_molecule()
         ccsd = CCEnergy(mol, memory=2)
@@ -108,7 +108,7 @@ class rtcc(object):
         Lambda.compute_lambda()
         density = 0
 
-        #density = CCDensity(ccsd,Lambda)
+        prop = CCProperties(ccsd,Lambda)
 
         options = {
             'timestep'          : 0.1,
@@ -116,4 +116,4 @@ class rtcc(object):
             'timelength'        : np.inf,
             'field amplitude'   : 0.002,
             'field frequency'   : 0.5}
-        td = RK4(ccsd,Lambda,density,options)
+        #td = RK4(ccsd,Lambda,density,options)

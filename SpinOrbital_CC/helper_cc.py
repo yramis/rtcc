@@ -535,7 +535,7 @@ class CCLambda(object):
 
 
         # Build intermediates independent of Lambda
-        np.set_printoptions(precision=14, linewidth=200, suppress=True)
+        np.set_printoptions(precision=12, linewidth=200, suppress=True)
         self.Fov = ccsd.build_Fov()
         self.Foo = self.transform_Foo(ccsd)
         self.Fvv = self.transform_Fvv(ccsd)
@@ -824,22 +824,22 @@ class CCLambda(object):
 
         Pab = ndot('aeij,eb->abij',l2,self.Fvv)
         rhs_L2  = rhs_L2 + Pab
-        rhs_L2 -= Pab.swapaxes(2,3)
+        rhs_L2 -= Pab.swapaxes(0,1)
 
         Pij = ndot('abim,jm->abij',l2,self.Foo)
         rhs_L2 -= Pij
-        rhs_L2 += Pij.swapaxes(0,1)
+        rhs_L2 += Pij.swapaxes(2,3)
 
         rhs_L2 += ndot('abmn,ijmn->abij',l2,self.Woooo,prefactor=0.5)
         rhs_L2 += ndot('efij,efab->abij',l2,self.Wvvvv,prefactor=0.5)
 
         Pij = ndot('ei,ejab->abij',l1,self.Wvovv)
         rhs_L2 += Pij
-        rhs_L2 -= Pij.swapaxes(0,1)
+        rhs_L2 -= Pij.swapaxes(2,3)
 
         Pab = ndot('am,ijmb->abij',l1,self.Wooov)
         rhs_L2 -= Pab
-        rhs_L2 += Pab.swapaxes(2,3)
+        rhs_L2 += Pab.swapaxes(0,1)
 
         Pijab = ndot('aeim,jebm->abij',l2,self.Wovvo)
         rhs_L2 += Pijab
@@ -855,12 +855,17 @@ class CCLambda(object):
 
         Pab = ndot('be,ijae->abij',Gvv,self.TEI[o,o,v,v])
         rhs_L2 += Pab
-        rhs_L2 -= Pab.swapaxes(2,3)
+        rhs_L2 -= Pab.swapaxes(0,1)
 
         Pij = ndot('mj,imab->abij',Goo,self.TEI[o,o,v,v])
         rhs_L2 -= Pij
-        rhs_L2 += Pij.swapaxes(0,1)
+        rhs_L2 += Pij.swapaxes(2,3)
 
+        #print('l1')
+        #print(np.transpose(l1+rhs_L1*self.Dia).real)
+        #print('\nl2')
+        #print(np.transpose(l2+rhs_L2*self.Dijab).real)
+        #raise SystemExit
 
         ### Update T1 and T2 amplitudes
         self.l1 = l1 + rhs_L1*self.Dia
@@ -922,3 +927,142 @@ class CCLambda(object):
             # End Lambda CCSD iterations
     # End CCLambda class
 
+
+class CCProperties(object):
+    def __init__(self,ccsd,Lambda,memory=2):
+        Print(yellow+"\nInitializing CCSD density object..."+end)
+
+        # Start timer
+        time_init = time.time()
+
+        # Read relevant data
+        self.n_occ  = ccsd.n_occ
+        self.n_virt = ccsd.n_virt
+        self.o      = ccsd.o
+        self.v      = ccsd.v
+
+        self.ints   = ccsd.mints.ao_dipole()
+
+        self.P      = ccsd.P
+        self.npC    = ccsd.npC
+
+        self.t1     = ccsd.t1
+        self.t2     = ccsd.t2
+
+        self.l1     = Lambda.l1
+        self.l2     = Lambda.l2
+
+        D = self.compute_ccsd_density()
+        Print(yellow+"\n..Density constructed in %.3f seconds\n" %(time.time()-time_init)+end)
+
+        # Get nuclear dipole moments
+        mol = psi4.core.get_active_molecule()
+        dipoles_nuc = mol.nuclear_dipole()
+
+        dipoles = self.compute_hf_dipole(self.P)
+        Print(blue+'Dipole moment computed at the HF level'+end)
+        Print(blue+'\tNuclear component (a.u.)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles_nuc[0],'Y:',dipoles_nuc[1],'Z:',dipoles_nuc[2])+end)
+        Print(blue+'\tElectronic component (a.u.)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
+        dipoles = np.asarray([dipoles[i] + dipoles_nuc[i] for i in range(3)])
+        Print(green+'\tTotal electric dipole (a.u.)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
+        dipoles *= 1/0.393456
+        Print(green+'\tTotal electric dipole (Debye)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}\n' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
+
+        dipoles = self.compute_ccsd_dipole(D)
+        Print(blue+'Dipole moment computed at the CCSD level'+end)
+        Print(blue+'\tNuclear component (a.u.)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles_nuc[0],'Y:',dipoles_nuc[1],'Z:',dipoles_nuc[2])+end)
+        Print(blue+'\tElectronic component (a.u.)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0].real,'Y:',dipoles[1].real,'Z:',dipoles[2].real)+end)
+        self.mu = dipoles.copy()
+        dipoles = np.asarray([dipoles[i] + dipoles_nuc[i] for i in range(3)])
+        Print(green+'\tTotal electric dipole (a.u.)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles[0].real,'Y:',dipoles[1].real,'Z:',dipoles[2].real)+end)
+        dipoles *= 1/0.393456
+        Print(green+'\tTotal electric dipole (Debye)'+end)
+        Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}\n' .format('X:',dipoles[0].real,'Y:',dipoles[1].real,'Z:',dipoles[2].real)+end)
+
+
+    def build_Doo(self, t1=None,t2=None,l1=None,l2=None):
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+        if l1 is None: l1 = self.l1
+        if l2 is None: l2 = self.l2
+
+        self.Doo  = ndot('jc,ci->ij',t1,l1,prefactor=-1)
+        self.Doo -= ndot('kjcd,cdki->ij',t2,l2,prefactor=0.5)
+        return self.Doo
+
+    def build_Dvv(self, t1=None,t2=None,l1=None,l2=None):
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+        if l1 is None: l1 = self.l1
+        if l2 is None: l2 = self.l2
+
+        self.Dvv  = ndot('ka,bk->ab',t1,l1)
+        self.Dvv += ndot('klca,cbkl->ab',t2,l2,prefactor=0.5)
+        return self.Dvv
+
+    def build_Dov(self, t1=None,t2=None,l1=None,l2=None):
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+        if l1 is None: l1 = self.l1
+        if l2 is None: l2 = self.l2
+
+        self.Dov  = t1.copy()
+        self.Dov += ndot('ikac,ck->ia',t2,l1)
+        tmp = ndot('ka,ck->ca',t1,l1)
+        self.Dov -= ndot('ic,ca->ia',t1,tmp)
+        self.Dov -= 0.5*contract('la,kicd,cdkl->ia',t1,t2,l2)
+        self.Dov -= 0.5*contract('id,klca,cdkl->ia',t1,t2,l2)
+        return self.Dov
+
+    def compute_ccsd_density(self, t1=None,t2=None,l1=None,l2=None):
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+        if l1 is None: l1 = self.l1
+        if l2 is None: l2 = self.l2
+
+        nso     = self.n_occ + self.n_virt
+        n_occ   = self.n_occ
+
+        self.build_Doo(t1,t2,l1,l2)
+        self.build_Dvv(t1,t2,l1,l2)
+        self.build_Dov(t1,t2,l1,l2)
+
+        D_corr_left     = np.vstack((self.Doo,l1))
+        D_corr_right    = np.vstack((self.Dov,self.Dvv))
+        D_corr          = np.hstack((D_corr_left,D_corr_right))     # CCSD correlation part of the density
+
+        D = np.zeros((nso,nso))
+        D[:n_occ,:n_occ] = np.eye(n_occ)                            # HF MO density
+        D = D + D_corr
+
+        # untile for alpha/beta spin
+        Da = np.delete(D, list(range(1, D.shape[0], 2)), axis=1)
+        Da = np.delete(Da, list(range(1, Da.shape[0], 2)), axis=0)
+        Db = np.delete(D, list(range(0, D.shape[0], 2)), axis=1)
+        Db = np.delete(Db, list(range(0, Db.shape[0], 2)), axis=0)
+
+        return Da+Db
+
+    def compute_hf_dipole(self,P):
+        # Compute HF electronic dipole moments
+        dipoles_elec = []
+        for n in range(3):
+            mu  = ndot('uv,vu->',np.asarray(self.ints[n]),self.P)
+            dipoles_elec.append(mu)
+        return dipoles_elec
+
+    def compute_ccsd_dipole(self,D):
+        # Compute CCSD correlated dipole
+        dipoles_elec = []
+        for n in range(3):
+            d = contract('ui,uv,vj->ij',self.npC,np.asarray(self.ints[n]),self.npC)
+            mu = ndot('ij,ji->',d,D)
+            dipoles_elec.append(mu)
+        return dipoles_elec

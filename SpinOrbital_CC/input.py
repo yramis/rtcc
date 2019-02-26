@@ -8,11 +8,13 @@ import psi4
 from helper_tdcc import rtcc
 
 mol = psi4.geometry("""
-He
+O
+H 1 1.1
+H 1 1.1 2 104
 symmetry c1
 """)
 
-psi4.set_options({'basis': 'cc-pvdz'})
+psi4.set_options({'basis': 'sto-3g'})
 psi4.set_options({'reference':'rhf'})
 
 rtcc()

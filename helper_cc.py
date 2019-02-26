@@ -521,14 +521,6 @@ class CCEnergy(object):
                 Print(blue+'The ccsd correlation energy is'+end)
                 Print(cyan+'\t%s \n' %e_ccsd+end)
 
-                print('\nt1')
-                print(self.t1.real)
-
-                rhs = self.update_t1(self.F,self.t1,self.t2)
-                print('\nrhs t1')
-                np.set_printoptions(precision=8,linewidth=200,suppress=True)
-                print(self.F)
-
                 return
 
             #  Add the new error vector
@@ -972,8 +964,6 @@ class CCLambda(object):
                 Print(blue+'The lambda pseudo-energy is'+end)
                 Print(cyan+'\t%s \n' %e_ccsd_p+end)
 
-                print(self.l1)
-
                 return
 
             # Add the new error vector
@@ -990,6 +980,7 @@ class CCDensity(object):
 
         # Start timer
         time_init = time.time()
+        np.set_printoptions(precision=12, linewidth=200, suppress=True)
 
         # Read relevant data
         self.n_occ  = ccsd.n_occ

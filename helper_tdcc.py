@@ -54,7 +54,7 @@ from helper_Print import Print
 from helper_cc import CCEnergy
 from helper_cc import CCHbar
 from helper_cc import CCLambda
-#from helper_cc import CCDensity
+from helper_cc import CCDensity
 from helper_prop import RK4
 import contextlib
 import time
@@ -112,7 +112,7 @@ class rtcc(object):
         #Lambda = 0
         #density = 0
 
-        #density = CCDensity(ccsd,Lambda)
+        density = CCDensity(ccsd,Lambda)
 
         options = {
             'timestep'          : 0.1,

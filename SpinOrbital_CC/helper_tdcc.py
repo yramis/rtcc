@@ -116,4 +116,4 @@ class rtcc(object):
             'timelength'        : np.inf,
             'field amplitude'   : 0.002,
             'field frequency'   : 0.5}
-        #td = RK4(ccsd,Lambda,density,options)
+        td = RK4(ccsd,Lambda,prop,options)

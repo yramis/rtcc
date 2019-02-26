@@ -7,7 +7,7 @@ from helper_Print import Print
 from helper_ndot import ndot
 from helper_cc import CCEnergy
 from helper_cc import CCLambda
-#from helper_cc import CCDensity
+from helper_cc import CCProperties
 from opt_einsum import contract
 
 bold        = '\033[1m'
@@ -22,7 +22,7 @@ end         = '\033[0m'
 colors      = [red,green,yellow,blue,purple,cyan]
 
 class RK4(object):
-    def __init__(self,ccsd,Lambda,density,options,memory=2):
+    def __init__(self,ccsd,Lambda,prop,options,memory=2):
         Print(yellow+"\nStarting time propagation with 4th order Runge Kutta...\n"+end)
 
         # Start timer
@@ -37,6 +37,7 @@ class RK4(object):
         self.F = F  # this is to be implicitly passed downstream to check for spin integration
         e_conv = psi4.core.get_option('CCENERGY','E_CONVERGENCE')
         energy = ccsd.compute_corr_energy()
+        dipole = prop.compute_ccsd_dipole()
 
         # build the electric dipole operator (this is where the electric field orientation is set)
         ints = ccsd.mints.ao_dipole()
@@ -86,7 +87,7 @@ class RK4(object):
             t1 = t1*0
             t2 = t2*0
             t = 0.0
-            h = 0.1
+            h = 0.01
             converged = False
             counter = 0
             while not converged:
@@ -94,17 +95,23 @@ class RK4(object):
                 t1 += dt1 * (-1.0j)
                 t2 += dt2 * (-1.0j)
                 t += h
-                if np.linalg.norm(dt1) < 1e-12 and np.linalg.norm(dt2) < 1e-12:
+                if np.linalg.norm(dt1) < 1e-8 and np.linalg.norm(dt2) < 1e-8:
                     converged = True
                 counter += 1
-            if np.allclose(t1-ccsd.t1,0*t1): print('t1 has converged to the CCSD result in %s steps' %counter)
-            if np.allclose(t2-ccsd.t2,0*t2): print('t2 has converged to the CCSD result in %s steps' %counter)
+            if np.allclose(t1-ccsd.t1,0*t1,1e-6): 
+                print('t1 has converged to the CCSD result in %s steps' %counter)
+            else:
+                print('after %s steps, t1 differs from the CCSD result by ' %counter, np.linalg.norm(t1-ccsd.t1))
+            if np.allclose(t2-ccsd.t2,0*t2,1e-6): 
+                print('t2 has converged to the CCSD result in %s steps' %counter)
+            else:
+                print('after %s steps, t2 differs from the CCSD result by ' %counter, np.linalg.norm(t2-ccsd.t2))
 
             print('\ntest imaginary time propagation Lambda')
             l1 = l1*0
             l2 = l2*0
             t = 0.0
-            h = 0.1
+            h = 0.01
             converged = False
             counter = 0
             while not converged:
@@ -112,11 +119,19 @@ class RK4(object):
                 l1 += dl1 * (1.0j)
                 l2 += dl2 * (1.0j)
                 t += h
-                if np.linalg.norm(dl1) < 1e-12 and np.linalg.norm(dl2) < 1e-12:
+                if np.linalg.norm(dl1) < 1e-8 and np.linalg.norm(dl2) < 1e-8:
                     converged = True
                 counter += 1
-            if np.allclose(l1-Lambda.l1,0*l1): print('l1 has converged to the CCSD result in %s steps' %counter)
-            if np.allclose(l2-Lambda.l2,0*l2): print('l2 has converged to the CCSD result in %s steps' %counter)
+            if np.allclose(l1-Lambda.l1,0*l1,1e-6): 
+                print('l1 has converged to the CCSD result in %s steps' %counter)
+            else:
+                print('after %s steps, l1 differs from the CCSD result by ' %counter, np.linalg.norm(l1-Lambda.l1))
+            if np.allclose(l2-Lambda.l2,0*l2,1e-6): 
+                print('l2 has converged to the CCSD result in %s steps' %counter)
+            else:
+                print('after %s steps, l2 differs from the CCSD result by ' %counter, np.linalg.norm(l2-Lambda.l2))
+
+            raise SystemExit
 
 
         data = {}
@@ -130,8 +145,8 @@ class RK4(object):
         data['l1 (imag part)']      = []
         data['l2 (real part)']      = []
         data['l2 (imag part)']      = []
-        #data['dipole (real part)']  = []
-        #data['dipole (imag part)']  = []
+        data['dipole (real part)']  = []
+        data['dipole (imag part)']  = []
         data['energy (real)']       = []
         data['energy (imag)']       = []
 
@@ -144,8 +159,8 @@ class RK4(object):
         data['l1 (imag part)'].append(l1.imag.tolist())
         data['l2 (real part)'].append(l2.real.tolist())
         data['l2 (imag part)'].append(l2.imag.tolist())
-        #data['dipole (real part)'].append(dipole[2].real)
-        #data['dipole (imag part)'].append(dipole[2].imag)
+        data['dipole (real part)'].append(dipole[2].real)
+        data['dipole (imag part)'].append(dipole[2].imag)
         data['energy (real)'].append(energy.real)
         data['energy (imag)'].append(energy.imag)
 
@@ -153,8 +168,8 @@ class RK4(object):
         N = options['number of steps']
         T = options['timelength']
         t = 0.0
-        #Print(blue+'{:>6s}{:8.4f}'.format('t = ',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('mu (Real):',dipole[2].real,'mu (Imag):',dipole[2].imag)+end)
-        Print(blue+'{:>6s}{:8.4f}'.format('t = ',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('e (Real):',energy.real,'e (Imag):',energy.imag)+end)
+        Print(blue+'{:>6s}{:8.4f}'.format('t = ',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('mu (Real):',dipole[2].real,'mu (Imag):',dipole[2].imag)+end)
+        #Print(blue+'{:>6s}{:8.4f}'.format('t = ',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('e (Real):',energy.real,'e (Imag):',energy.imag)+end)
 
         for i in range(N):
             dt1, dt2 = self.prop_t(ccsd, t,h,F,self.Vt,t1,t2)
@@ -170,10 +185,12 @@ class RK4(object):
 
             t += h
 
-            #D = density.compute_ccsd_density(t1,t2,l1,l2)
-            #self.check_trace(D,ccsd.n_e)
-            #dipole = density.compute_ccsd_dipole(D)
             energy = ccsd.compute_corr_energy(F,t1,t2)
+            dipole = prop.compute_ccsd_dipole(t1,t2,l1,l2)
+
+            if abs(energy.real) > 1000:
+                Print(red+'\nThe propagation is unstable, restart with a smaller time step'+end)
+                raise SystemExit
 
             data['time'].append(t)
             data['t1 (real part)'].append(t1.real.tolist())
@@ -184,13 +201,13 @@ class RK4(object):
             data['l1 (imag part)'].append(l1.imag.tolist())
             data['l2 (real part)'].append(l2.real.tolist())
             data['l2 (imag part)'].append(l2.imag.tolist())
-            #data['dipole (real part)'].append(dipole[2].real)
-            #data['dipole (imag part)'].append(dipole[2].imag)
+            data['dipole (real part)'].append(dipole[2].real)
+            data['dipole (imag part)'].append(dipole[2].imag)
             data['energy (real)'].append(energy.real)
             data['energy (imag)'].append(energy.imag)
 
-            #Print(blue+'{:>6s}{:8.4f}'.format('t =',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('mu (Real):',dipole[2].real,'mu (Imag):',dipole[2].imag)+end)
-            Print(blue+'{:>6s}{:8.4f}'.format('t = ',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('e (Real):',energy.real,'e (Imag):',energy.imag)+end)
+            Print(blue+'{:>6s}{:8.4f}'.format('t =',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('mu (Real):',dipole[2].real,'mu (Imag):',dipole[2].imag)+end)
+            #Print(blue+'{:>6s}{:8.4f}'.format('t = ',t)+cyan+'\t{:>15s}{:10.5f}{:>15s}{:12.3E}' .format('e (Real):',energy.real,'e (Imag):',energy.imag)+end)
 
             if time.time() > T:
                 Print(yellow+'\nEnd of propagation reached: time = %s seconds' %T+end)
@@ -234,20 +251,20 @@ class RK4(object):
     
     def prop_t(self,ccsd, t,h,F,Vt,t1,t2):
         # stage 1
-        self.k1_t1 = ccsd.residual_t1(F + Vt(t),        t1,                    t2                       ) * (-1.0j)
-        self.k1_t2 = ccsd.residual_t2(F + Vt(t),        t1,                    t2                       ) * (-1.0j)
+        self.k1_t1 = ccsd.residual_t1(F + Vt(t),        t1,                    t2                       )
+        self.k1_t2 = ccsd.residual_t2(F + Vt(t),        t1,                    t2                       )
         # stage 2
-        self.k2_t1 = ccsd.residual_t1(F + Vt(t+h/2.0),  t1 + h*self.k1_t1/2.0,  t2 + h*self.k1_t2/2.0   ) * (-1.0j)
-        self.k2_t2 = ccsd.residual_t2(F + Vt(t+h/2.0),  t1 + h*self.k1_t1/2.0,  t2 + h*self.k1_t2/2.0   ) * (-1.0j)
+        self.k2_t1 = ccsd.residual_t1(F + Vt(t+h/2.0),  t1 + h*self.k1_t1/2.0,  t2 + h*self.k1_t2/2.0   )
+        self.k2_t2 = ccsd.residual_t2(F + Vt(t+h/2.0),  t1 + h*self.k1_t1/2.0,  t2 + h*self.k1_t2/2.0   )
         # stage 3
-        self.k3_t1 = ccsd.residual_t1(F + Vt(t+h/2.0),  t1 + h*self.k2_t1/2.0,  t2 + h*self.k2_t2/2.0   ) * (-1.0j)
-        self.k3_t2 = ccsd.residual_t2(F + Vt(t+h/2.0),  t1 + h*self.k2_t1/2.0,  t2 + h*self.k2_t2/2.0   ) * (-1.0j)
+        self.k3_t1 = ccsd.residual_t1(F + Vt(t+h/2.0),  t1 + h*self.k2_t1/2.0,  t2 + h*self.k2_t2/2.0   )
+        self.k3_t2 = ccsd.residual_t2(F + Vt(t+h/2.0),  t1 + h*self.k2_t1/2.0,  t2 + h*self.k2_t2/2.0   )
         # stage 4
-        self.k4_t1 = ccsd.residual_t1(F + Vt(t+h),      t1 + h*self.k3_t1,      t2 + h*self.k3_t2       ) * (-1.0j)
-        self.k4_t2 = ccsd.residual_t2(F + Vt(t+h),      t1 + h*self.k3_t1,      t2 + h*self.k3_t2       ) * (-1.0j)
+        self.k4_t1 = ccsd.residual_t1(F + Vt(t+h),      t1 + h*self.k3_t1,      t2 + h*self.k3_t2       )
+        self.k4_t2 = ccsd.residual_t2(F + Vt(t+h),      t1 + h*self.k3_t1,      t2 + h*self.k3_t2       )
         #
-        dt1 = (h/6.0) * (self.k1_t1 + 2*self.k2_t1 + 2*self.k3_t1 + self.k4_t1)
-        dt2 = (h/6.0) * (self.k1_t2 + 2*self.k2_t2 + 2*self.k3_t2 + self.k4_t2)
+        dt1 = (h/6.0) * (self.k1_t1 + 2*self.k2_t1 + 2*self.k3_t1 + self.k4_t1) * (-1.0j)
+        dt2 = (h/6.0) * (self.k1_t2 + 2*self.k2_t2 + 2*self.k3_t2 + self.k4_t2) * (-1.0j)
         return dt1, dt2
 
     def prop_l(self,ccsd,Lambda, t,h,F,Vt,t1,t2,l1,l2):
@@ -261,20 +278,20 @@ class RK4(object):
         k3_t2 = self.k3_t2
         k4_t2 = self.k4_t2
         # stage 1
-        k1_l1 = Lambda.residual_l1(ccsd, F + Vt(t),         t1,                 t2,                 l1,                 l2              ) * (1.0j)
-        k1_l2 = Lambda.residual_l2(ccsd, F + Vt(t),         t1,                 t2,                 l1,                 l2              ) * (1.0j)
+        k1_l1 = Lambda.residual_l1(ccsd, F + Vt(t),         t1,                 t2,                 l1,                 l2              )
+        k1_l2 = Lambda.residual_l2(ccsd, F + Vt(t),         t1,                 t2,                 l1,                 l2              )
         # stage 2
-        k2_l1 = Lambda.residual_l1(ccsd, F + Vt(t+h/2.0),   t1 + h*k1_t1/2.0,   t2 + h*k1_t2/2.0,   l1 + h*k1_l1/2.0,   l2 + h*k1_l2/2.0) * (1.0j)
-        k2_l2 = Lambda.residual_l2(ccsd, F + Vt(t+h/2.0),   t1 + h*k1_t1/2.0,   t2 + h*k1_t2/2.0,   l1 + h*k1_l1/2.0,   l2 + h*k1_l2/2.0) * (1.0j)
+        k2_l1 = Lambda.residual_l1(ccsd, F + Vt(t+h/2.0),   t1 + h*k1_t1/2.0,   t2 + h*k1_t2/2.0,   l1 + h*k1_l1/2.0,   l2 + h*k1_l2/2.0)
+        k2_l2 = Lambda.residual_l2(ccsd, F + Vt(t+h/2.0),   t1 + h*k1_t1/2.0,   t2 + h*k1_t2/2.0,   l1 + h*k1_l1/2.0,   l2 + h*k1_l2/2.0)
         # stage 3
-        k3_l1 = Lambda.residual_l1(ccsd, F + Vt(t+h/2.0),   t1 + h*k2_t1/2.0,   t2 + h*k2_t2/2.0,   l1 + h*k2_l1/2.0,   l2 + h*k2_l2/2.0) * (1.0j)
-        k3_l2 = Lambda.residual_l2(ccsd, F + Vt(t+h/2.0),   t1 + h*k2_t1/2.0,   t2 + h*k2_t2/2.0,   l1 + h*k2_l1/2.0,   l2 + h*k2_l2/2.0) * (1.0j)
+        k3_l1 = Lambda.residual_l1(ccsd, F + Vt(t+h/2.0),   t1 + h*k2_t1/2.0,   t2 + h*k2_t2/2.0,   l1 + h*k2_l1/2.0,   l2 + h*k2_l2/2.0)
+        k3_l2 = Lambda.residual_l2(ccsd, F + Vt(t+h/2.0),   t1 + h*k2_t1/2.0,   t2 + h*k2_t2/2.0,   l1 + h*k2_l1/2.0,   l2 + h*k2_l2/2.0)
         # stage 4
-        k4_l1 = Lambda.residual_l1(ccsd, F + Vt(t+h),       t1 + h*k3_t1,       t2 + h*k3_t2,       l1 + h*k3_l1,       l2 + h*k3_l2    ) * (1.0j)
-        k4_l2 = Lambda.residual_l2(ccsd, F + Vt(t+h),       t1 + h*k3_t1,       t2 + h*k3_t2,       l1 + h*k3_l1,       l2 + h*k3_l2    ) * (1.0j)
+        k4_l1 = Lambda.residual_l1(ccsd, F + Vt(t+h),       t1 + h*k3_t1,       t2 + h*k3_t2,       l1 + h*k3_l1,       l2 + h*k3_l2    )
+        k4_l2 = Lambda.residual_l2(ccsd, F + Vt(t+h),       t1 + h*k3_t1,       t2 + h*k3_t2,       l1 + h*k3_l1,       l2 + h*k3_l2    )
         #
-        dl1 = (h/6.0) * (k1_l1 + 2*k2_l1 + 2*k3_l1 + k4_l1)
-        dl2 = (h/6.0) * (k1_l2 + 2*k2_l2 + 2*k3_l2 + k4_l2)
+        dl1 = (h/6.0) * (k1_l1 + 2*k2_l1 + 2*k3_l1 + k4_l1) * (1.0j)
+        dl2 = (h/6.0) * (k1_l2 + 2*k2_l2 + 2*k3_l2 + k4_l2) * (1.0j)
         return dl1, dl2
 
     def check_trace(self,M,t):

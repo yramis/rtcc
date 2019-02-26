@@ -755,22 +755,22 @@ class CCLambda(object):
 
         Pab = ndot('aeij,eb->abij',l2,self.Fvv)
         rhs_L2  = rhs_L2 + Pab
-        rhs_L2 -= Pab.swapaxes(2,3)
+        rhs_L2 -= Pab.swapaxes(0,1)
 
         Pij = ndot('abim,jm->abij',l2,self.Foo)
         rhs_L2 -= Pij
-        rhs_L2 += Pij.swapaxes(0,1)
+        rhs_L2 += Pij.swapaxes(2,3)
 
         rhs_L2 += ndot('abmn,ijmn->abij',l2,self.Woooo,prefactor=0.5)
         rhs_L2 += ndot('efij,efab->abij',l2,self.Wvvvv,prefactor=0.5)
 
         Pij = ndot('ei,ejab->abij',l1,self.Wvovv)
         rhs_L2 += Pij
-        rhs_L2 -= Pij.swapaxes(0,1)
+        rhs_L2 -= Pij.swapaxes(2,3)
 
         Pab = ndot('am,ijmb->abij',l1,self.Wooov)
         rhs_L2 -= Pab
-        rhs_L2 += Pab.swapaxes(2,3)
+        rhs_L2 += Pab.swapaxes(0,1)
 
         Pijab = ndot('aeim,jebm->abij',l2,self.Wovvo)
         rhs_L2 += Pijab
@@ -786,11 +786,11 @@ class CCLambda(object):
 
         Pab = ndot('be,ijae->abij',Gvv,self.TEI[o,o,v,v])
         rhs_L2 += Pab
-        rhs_L2 -= Pab.swapaxes(2,3)
+        rhs_L2 -= Pab.swapaxes(0,1)
 
         Pij = ndot('mj,imab->abij',Goo,self.TEI[o,o,v,v])
         rhs_L2 -= Pij
-        rhs_L2 += Pij.swapaxes(0,1)
+        rhs_L2 += Pij.swapaxes(2,3)
 
         return rhs_L2
 
@@ -861,11 +861,6 @@ class CCLambda(object):
         rhs_L2 -= Pij
         rhs_L2 += Pij.swapaxes(2,3)
 
-        #print('l1')
-        #print(np.transpose(l1+rhs_L1*self.Dia).real)
-        #print('\nl2')
-        #print(np.transpose(l2+rhs_L2*self.Dijab).real)
-        #raise SystemExit
 
         ### Update T1 and T2 amplitudes
         self.l1 = l1 + rhs_L1*self.Dia
@@ -972,7 +967,7 @@ class CCProperties(object):
         Print(green+'\tTotal electric dipole (Debye)'+end)
         Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}\n' .format('X:',dipoles[0],'Y:',dipoles[1],'Z:',dipoles[2])+end)
 
-        dipoles = self.compute_ccsd_dipole(D)
+        dipoles = self.compute_ccsd_dipole()
         Print(blue+'Dipole moment computed at the CCSD level'+end)
         Print(blue+'\tNuclear component (a.u.)'+end)
         Print(cyan+'\t{:>6s}{:10.5f}{:>6s}{:10.5f}{:>6s}{:10.5f}' .format('X:',dipoles_nuc[0],'Y:',dipoles_nuc[1],'Z:',dipoles_nuc[2])+end)
@@ -1058,7 +1053,14 @@ class CCProperties(object):
             dipoles_elec.append(mu)
         return dipoles_elec
 
-    def compute_ccsd_dipole(self,D):
+    def compute_ccsd_dipole(self, t1=None,t2=None,l1=None,l2=None):
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+        if l1 is None: l1 = self.l1
+        if l2 is None: l2 = self.l2
+
+        D = self.compute_ccsd_density(t1,t2,l1,l2)
+
         # Compute CCSD correlated dipole
         dipoles_elec = []
         for n in range(3):

@@ -187,6 +187,7 @@ class CCEnergy(object):
         return tau  # Tau tilde (alpha/beta)
 
 
+    # Compute the effective Fock matrix
     def build_Foo(self):
         o = self.o
         v = self.v
@@ -218,6 +219,7 @@ class CCEnergy(object):
         return Fvo      # Fme
 
 
+    # Compute the 2-body intermediates W
     def build_Woooo(self):
         o = self.o
         v = self.v
@@ -475,7 +477,7 @@ class CCEnergy(object):
 
         return t2_new
 
-    def compute_ccsd_energy(self):
+    def compute_corr_energy(self):
         o = self.o
         v = self.v
         e = ndot('ijab,abij->',self.build_tau(),self.V[v,v,o,o]).real
@@ -486,7 +488,7 @@ class CCEnergy(object):
     def compute_ccsd(self,maxiter=50,max_diis=8,start_diis=1):
         ccsd_tstart = time.time()
         
-        self.e_mp2 = self.compute_ccsd_energy()
+        self.e_mp2 = self.compute_corr_energy()
 
         Print('\n\t  Summary of iterative solution of the CC equations')
         Print('\t------------------------------------------------------')
@@ -507,7 +509,7 @@ class CCEnergy(object):
             e_old = self.e_ccsd
 
             self.update()
-            e_ccsd = self.compute_ccsd_energy()
+            e_ccsd = self.compute_corr_energy()
             rms = e_ccsd - e_old
             Print('\t{:4d}{:26.15f}{:15.5E}   DIIS={:d}' .format(iter,e_ccsd,rms,diis_object.diis_size))
 
@@ -524,7 +526,8 @@ class CCEnergy(object):
 
                 rhs = self.update_t1(self.F,self.t1,self.t2)
                 print('\nrhs t1')
-                print(rhs.real)
+                np.set_printoptions(precision=8,linewidth=200,suppress=True)
+                print(self.F)
 
                 return
 
@@ -968,6 +971,8 @@ class CCLambda(object):
                 Print(yellow+"\n..The Lambda CCSD equations have converged in %.3f seconds" %(time.time()-lambda_tstart)+end)
                 Print(blue+'The lambda pseudo-energy is'+end)
                 Print(cyan+'\t%s \n' %e_ccsd_p+end)
+
+                print(self.l1)
 
                 return
 

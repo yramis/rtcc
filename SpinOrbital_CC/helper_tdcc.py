@@ -44,17 +44,17 @@ This assumes RHF reference and C1 symmetry
 """
 
 __authors__ = "Alexandre P. Bazante"
-__credits__ = ["T.D. Crawford","Ashutosh Kumar","Alexandre P. Bazante"]
+__credits__ = [
+        "T.D. Crawford","Ashutosh Kumar","Alexandre P. Bazante"]
 
 import sys
 import psi4
 import numpy as np
 from helper_Print import Print
 from helper_cc import CCEnergy
-#from helper_cc import CCHbar
-#from helper_cc import CCLambda
+from helper_cc import CCLambda
 #from helper_cc import CCDensity
-#from helper_prop import RK4
+from helper_prop import RK4
 import contextlib
 import time
 from opt_einsum import contract
@@ -94,27 +94,26 @@ class rtcc(object):
     def __init__(self,memory=2):
 
         psi4.set_module_options('SCF', {'SCF_TYPE':'PK'})
-        psi4.set_module_options('SCF', {'E_CONVERGENCE':1e-13})
-        psi4.set_module_options('SCF', {'D_CONVERGENCE':1e-13})
+        psi4.set_module_options('SCF', {'E_CONVERGENCE':1e-12})
+        psi4.set_module_options('SCF', {'D_CONVERGENCE':1e-12})
 
-        psi4.set_module_options('CCENERGY', {'E_CONVERGENCE':1e-16})
-        psi4.set_module_options('CCLAMBDA', {'R_CONVERGENCE':1e-16})
+        psi4.set_module_options('CCENERGY', {'E_CONVERGENCE':1e-12})
+        psi4.set_module_options('CCLAMBDA', {'R_CONVERGENCE':1e-12})
 
         mol = psi4.core.get_active_molecule()
         ccsd = CCEnergy(mol, memory=2)
         ccsd.compute_ccsd()
 
-        #hbar = CCHbar(ccsd)
-
-        #Lambda = CCLambda(ccsd,hbar)
-        #Lambda.compute_lambda()
+        Lambda = CCLambda(ccsd)
+        Lambda.compute_lambda()
+        density = 0
 
         #density = CCDensity(ccsd,Lambda)
 
         options = {
             'timestep'          : 0.1,
-            'number of steps'   : 1000,
+            'number of steps'   : 100,
             'timelength'        : np.inf,
             'field amplitude'   : 0.002,
             'field frequency'   : 0.5}
-        #td = RK4(ccsd,Lambda,density,options)
+        td = RK4(ccsd,Lambda,density,options)

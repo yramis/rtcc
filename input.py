@@ -10,9 +10,8 @@ from opt_einsum import contract
 import numpy as np
 
 mol = psi4.geometry("""
-O
-H 1 1.1
-H 1 1.1 2 104
+Li
+H 1 1
 symmetry c1
 """)
 
@@ -21,14 +20,10 @@ psi4.set_options({'reference':'rhf'})
 
 rtcc()
 
-#e,wfn = psi4.energy('ccsd',return_wfn=True)
-#e,wfn = psi4.properties('ccsd','dipole',return_wfn=True)
-#C = np.asarray(wfn.Ca())
-#P = 2*np.asarray(wfn.Da())
-#D = contract('iu,uv,jv->ij',np.linalg.inv(C),P,np.linalg.inv(C))
-#np.set_printoptions(precision=5,suppress=True)
-#print('psi4 D')
-#print(D)
-#print('trace')
-#print(np.trace(D))
-# Water SCF/cc-pVDZ Single Point Energy
+psi4.set_module_options('SCF', {'SCF_TYPE':'PK'})
+psi4.set_module_options('SCF', {'E_CONVERGENCE':1e-14})
+psi4.set_module_options('SCF', {'D_CONVERGENCE':1e-14})
+psi4.set_module_options('CCENERGY', {'E_CONVERGENCE':1e-16})
+psi4.set_module_options('CCLAMBDA', {'R_CONVERGENCE':1e-16})
+
+e_ccsd = psi4.properties('ccsd','dipole')

@@ -88,6 +88,7 @@ class CCEnergy(object):
 
         # Start timer
         time_init = time.time()
+        np.set_printoptions(precision=10,linewidth=200,suppress=True)
 
         # Read molecule data
         psi4.core.set_active_molecule(mol)
@@ -462,7 +463,69 @@ class CCEnergy(object):
         self.e_ccsd = e.real
         self.E_ccsd = e.real + self.e_scf
         return e
-    
+
+    def print_amplitudes(self):
+        # untile T1 for alpha/beta spin
+        t1 = self.t1.real.copy()
+        n = len(t1.shape)
+        for i in range(n):
+            t1 = np.delete(t1, list(range(1, t1.shape[i], 2)), axis=i)
+        # unpack tensor, remove zeros, sort and select top 10
+        t = np.ravel(t1)
+        t = sorted(t[np.nonzero(t)],key=abs,reverse=True)
+        if len(t) > 10:
+            t = t[:10]
+        # Disentangle degenerate amplitudes
+        indeces = []
+        amplitudes = []
+        for amplitude in t:
+            index = np.argwhere(t1==amplitude)
+            if index.shape[0]==1:
+                indeces.append(index[0])
+                amplitudes.append(amplitude)
+            else:
+                n = index.shape[0]
+                for i in range(n):
+                    if not next((True for elem in indeces if elem.size == index[i].size and np.allclose(elem, index[i])), False):
+                        indeces.append(index[i])
+                        amplitudes.append(amplitude)
+        Print(green+'Largest t(I,A) amplitudes'+end)
+        for i in range(len(amplitudes)):
+            index = indeces[i]
+            amplitude = amplitudes[i]
+            Print(cyan+'\t{:2d}{:2d}{:>24.10f}'.format(index[0]+1,index[1]+1,amplitude)+end)
+
+        # untile T2 for alpha/beta spin
+        t2 = self.t2.real.copy()
+        t2 = np.delete(t2, list(range(1, t2.shape[0], 2)), axis=0)
+        t2 = np.delete(t2, list(range(0, t2.shape[1], 2)), axis=1)
+        t2 = np.delete(t2, list(range(1, t2.shape[2], 2)), axis=2)
+        t2 = np.delete(t2, list(range(0, t2.shape[3], 2)), axis=3)
+        # unpack tensor, remove zeros, sort and select top 10
+        t = np.ravel(t2)
+        t = sorted(t[np.nonzero(t)],key=abs,reverse=True)
+        if len(t) > 10:
+            t = t[:10]
+        # Disentangle degenerate amplitudes
+        indeces = []
+        amplitudes = []
+        for amplitude in t:
+            index = np.argwhere(t2==amplitude)
+            if index.shape[0]==1:
+                indeces.append(index[0])
+                amplitudes.append(amplitude)
+            else:
+                n = index.shape[0]
+                for i in range(n):
+                    if not next((True for elem in indeces if elem.size == index[i].size and np.allclose(elem, index[i])), False):
+                        indeces.append(index[i])
+                        amplitudes.append(amplitude)
+        Print(green+'Largest t(I,j,A,b) amplitudes'+end)
+        for i in range(len(amplitudes)):
+            index = indeces[i]
+            amplitude = amplitudes[i]
+            Print(cyan+'\t{:2d}{:2d}{:2d}{:2d}{:>20.10f}'.format(index[0]+1,index[1]+1,index[2]+1,index[3]+1,amplitude)+end)
+
     def compute_ccsd(self,maxiter=50,max_diis=8,start_diis=1):
         ccsd_tstart = time.time()
         
@@ -495,6 +558,8 @@ class CCEnergy(object):
                 Print(yellow+"\n..The CCSD equations have converged in %.3f seconds" %(time.time()-ccsd_tstart)+end)
                 Print(blue+'The ccsd correlation energy is'+end)
                 Print(cyan+'\t%s \n' %e_ccsd+end)
+
+                self.print_amplitudes()
 
                 return
 
@@ -533,21 +598,42 @@ class CCLambda(object):
         self.l1     = self.t1.swapaxes(0,1).copy()
         self.l2     = self.t2.swapaxes(0,2).swapaxes(1,3).copy()
 
-
         # Build intermediates independent of Lambda
-        np.set_printoptions(precision=12, linewidth=200, suppress=True)
         self.Fov = ccsd.build_Fov()
         self.Foo = self.transform_Foo(ccsd)
         self.Fvv = self.transform_Fvv(ccsd)
 
         self.Woooo = self.transform_Woooo(ccsd)
         self.Wvvvv = self.transform_Wvvvv(ccsd)
-        self.Wovvo = self.transform_Wovvo(ccsd)
+        self.Wvoov = self.transform_Wovvo(ccsd)
 
         self.Wooov = self.build_Wooov(ccsd)
-        self.Wvovv = self.build_Wvovv(ccsd)
-        self.Wovoo = self.build_Wovoo(ccsd)
         self.Wvvvo = self.build_Wvvvo(ccsd)
+        #self.Wovoo = self.build_Wovoo(ccsd)
+        #self.Wvvvo = self.build_Wvvvo(ccsd)
+
+        #np.set_printoptions(precision=12,linewidth=200,suppress=True)
+        #M = ndot('abmn,ijmn->abij',self.l2,self.Woooo,prefactor=0.5)
+        #M = self.untile_ab(M)
+        #print(M)
+        #raise SystemExit
+
+    def untile_a(self, M):
+        # untile for alpha/beta spin
+        M = M.real
+        n = len(M.shape)
+        for i in range(n):
+            M = np.delete(M, list(range(1, M.shape[i], 2)), axis=i)
+        return M
+
+    def untile_ab(self, M):
+        # untile for alpha/beta spin
+        M = M.real
+        M = np.delete(M, list(range(1, M.shape[0], 2)), axis=0)
+        M = np.delete(M, list(range(0, M.shape[1], 2)), axis=1)
+        M = np.delete(M, list(range(1, M.shape[2], 2)), axis=2)
+        M = np.delete(M, list(range(0, M.shape[3], 2)), axis=3)
+        return M
 
 
     # Update the intermediates with Hbar elements
@@ -556,18 +642,18 @@ class CCLambda(object):
         if t1 is None: t1 = self.t1
         if t2 is None: t2 = self.t2
 
-        Foo  = ccsd.build_Foo(F,t1,t2)
-        Foo += ndot('ie,me->mi',t1,self.Fov,prefactor=0.5)
-        return Foo      # Fmi
+        Foo  = ccsd.build_Foo(F,t1,t2).swapaxes(0,1)
+        Foo -= ndot('me,ie->im',t1,self.Fov,prefactor=0.5)
+        return Foo      # Fim
 
     def transform_Fvv(self,ccsd, F=None,t1=None,t2=None):
         if F  is None: F = self.F
         if t1 is None: t1 = self.t1
         if t2 is None: t2 = self.t2
 
-        Fvv  = ccsd.build_Fvv(F,t1,t2)
-        Fvv -= ndot('ma,me->ae',t1,self.Fov,prefactor=0.5)
-        return Fvv      # Fae
+        Fvv  = ccsd.build_Fvv(F,t1,t2).swapaxes(0,1)
+        Fvv -= ndot('me,ma->ea',t1,self.Fov,prefactor=0.5)
+        return Fvv      # Fea
 
     def transform_Woooo(self,ccsd, t1=None,t2=None):
         if t1 is None: t1 = self.t1
@@ -578,9 +664,9 @@ class CCLambda(object):
 
         tau = ccsd.build_tau(t1,t2)
 
-        W  = ccsd.build_Woooo(t1,t2)
-        W += ndot('ijef,mnef->mnij',tau,self.TEI[o,o,v,v],prefactor=0.25)
-        return W           # Wmnij
+        W  = ccsd.build_Woooo(t1,t2).swapaxes(0,1).swapaxes(2,3)
+        W += ndot('mnef,efij->ijmn',tau,self.TEI[v,v,o,o],prefactor=0.25)
+        return W           # Wijmn
 
     def transform_Wvvvv(self,ccsd, t1=None,t2=None):
         if t1 is None: t1 = self.t1
@@ -591,9 +677,9 @@ class CCLambda(object):
 
         tau = ccsd.build_tau(t1,t2)
         
-        W  = ccsd.build_Wvvvv(t1,t2)
-        W += ndot('mnab,mnef->abef',tau,self.TEI[o,o,v,v],prefactor=0.25)
-        return W           # Wabef
+        W  = ccsd.build_Wvvvv(t1,t2).swapaxes(0,1).swapaxes(2,3)
+        W += ndot('mnef,mnab->efab',tau,self.TEI[o,o,v,v],prefactor=0.25)
+        return W           # Wefab
 
     def transform_Wovvo(self,ccsd, t1=None,t2=None):
         if t1 is None: t1 = self.t1
@@ -602,13 +688,14 @@ class CCLambda(object):
         o = self.o
         v = self.v
 
-        W  = ccsd.build_Wovvo(t1,t2)
-        W -= ndot('jnfb,mnef->mbej',t2,self.TEI[o,o,v,v],prefactor=0.5)
-        return W           # Wmbej
+        W  = ccsd.build_Wovvo(t1,t2).swapaxes(0,1).swapaxes(2,3)
+        W += ndot('mnef,njfb->ejmb',t2,self.TEI[o,o,v,v],prefactor=0.5)
+        return W           # Wejmb
 
 
     # Build new intermediates
-    def build_Wooov(self,ccsd, t1=None,t2=None):
+    def build_Wooov(self,ccsd, F=None,t1=None,t2=None):
+        if F is None: F = self.F
         if t1 is None: t1 = self.t1
         if t2 is None: t2 = self.t2
 
@@ -616,63 +703,88 @@ class CCLambda(object):
         v = self.v
 
         W = self.TEI[o,o,o,v].copy()
-        W = W + ndot('if,mnfe->mnie',t1,self.TEI[o,o,v,v])
+        Fov = ccsd.build_Fov(F,t1)
+        W = W - ndot('if,mnef->mnie',Fov,t2)
+        W -= ndot('oe,iomn->mnie',t1,self.Woooo)
+        tau = ccsd.build_tau(t1,t2)
+        W += ndot('mnfg,fgie->mnie',tau,self.TEI[v,v,o,v],prefactor=0.5)
+
+        tmpW  = self.TEI[o,v,v,o].copy()
+        tmpW = tmpW - ndot('oneg,iofg->iefn',t2,self.TEI[o,o,v,v])
+        tmp  = ndot('mf,iefn->mnie',t1,tmpW)
+        tmp += ndot('noef,iomf->mnie',t2,self.TEI[o,o,o,v])
+        tmp -= tmp.swapaxes(0,1)
+        W += tmp
+
         return W            # Wmnie
 
-    def build_Wvovv(self,ccsd, t1=None,t2=None):
+    def build_Wvvvo(self,ccsd, F=None,t1=None,t2=None):
+        if F is None: F = self.F
         if t1 is None: t1 = self.t1
         if t2 is None: t2 = self.t2
 
         o = self.o
         v = self.v
 
-        W = self.TEI[v,o,v,v].copy()
-        W = W - ndot('na,nmef->amef',t1,self.TEI[o,o,v,v])
-        return W            # Wamef
-
-    def build_Wovoo(self,ccsd, t1=None,t2=None):
-        if t1 is None: t1 = self.t1
-        if t2 is None: t2 = self.t2
-
-        o = self.o
-        v = self.v
-
+        W = self.TEI[v,v,v,o].copy()
+        Fov = ccsd.build_Fov(F,t1)
+        W  = W + ndot('na,mnef->efam',Fov,t2)
+        W += ndot('mg,efag->efam',t1,self.Wvvvv)
         tau = ccsd.build_tau(t1,t2)
+        W += ndot('noef,amno->efam',tau,self.TEI[v,o,o,o],prefactor=0.5)
 
-        W  = self.TEI[o,v,o,o].copy()
-        W  = W - ndot('ijbe,me->mbij',t2,self.Fov)
-        W -= ndot('nb,mnij->mbij',t1,self.Woooo)
-        W += ndot('ijef,mbef->mbij',tau,self.TEI[o,v,v,v],prefactor=0.5)
+        tmpW  = self.TEI[o,v,v,o].copy()
+        tmpW = tmpW - ndot('omfg,noag->nfam',t2,self.TEI[o,o,v,v])
+        tmp  = ndot('mnfg,enag->efam',t2,self.TEI[v,o,v,v])
+        tmp -= ndot('ne,nfam->efam',t1,tmpW)
+        tmp -= tmp.swapaxes(0,1)
+        W += tmp
 
-        Pij = ndot('jnbe,mnie->mbij',t2,self.TEI[o,o,o,v])
-        temp_mbej = self.TEI[o,v,v,o].copy()
-        temp_mbej = temp_mbej - ndot('njbf,mnef->mbej',t2,self.TEI[o,o,v,v])
-        Pij += ndot('ie,mbej->mbij',t1,temp_mbej)
-        W += Pij
-        W -= Pij.swapaxes(2,3)
-        return W            # Wmbij
+        return W            # Wefam
 
-    def build_Wvvvo(self,ccsd, t1=None,t2=None):
-        if t1 is None: t1 = self.t1
-        if t2 is None: t2 = self.t2
+#    def build_Wovoo(self,ccsd, t1=None,t2=None):
+#        if t1 is None: t1 = self.t1
+#        if t2 is None: t2 = self.t2
+#
+#        o = self.o
+#        v = self.v
+#
+#        tau = ccsd.build_tau(t1,t2)
+#
+#        W  = self.TEI[o,v,o,o].copy()
+#        W  = W - ndot('ijbe,me->mbij',t2,self.Fov)
+#        W -= ndot('nb,mnij->mbij',t1,self.Woooo)
+#        W += ndot('ijef,mbef->mbij',tau,self.TEI[o,v,v,v],prefactor=0.5)
+#
+#        Pij = ndot('jnbe,mnie->mbij',t2,self.TEI[o,o,o,v])
+#        temp_mbej = self.TEI[o,v,v,o].copy()
+#        temp_mbej = temp_mbej - ndot('njbf,mnef->mbej',t2,self.TEI[o,o,v,v])
+#        Pij += ndot('ie,mbej->mbij',t1,temp_mbej)
+#        W += Pij
+#        W -= Pij.swapaxes(2,3)
+#        return W            # Wmbij
 
-        o = self.o
-        v = self.v
-
-        tau = ccsd.build_tau(t1,t2)
-
-        W  = self.TEI[v,v,v,o].copy()
-        W  = W - ndot('miab,me->abei',t2,self.Fov)
-        W += ndot('if,abef->abei',t1,self.Wvvvv)
-        W += ndot('mnab,mnei->abei',tau,self.TEI[o,o,v,o],prefactor=0.5)
-
-        Pab = ndot('miaf,mbef->abei',t2,self.TEI[o,v,v,v])
-        temp_mbei = self.TEI[o,v,v,o].copy()
-        temp_mbei = temp_mbei - ndot('nibf,mnef->mbei',t2,self.TEI[o,o,v,v])
-        Pab += ndot('ma,mbei->abei',t1,temp_mbei)
-        W -= Pab
-        W += Pab.swapaxes(0,1)
-        return W            # Wabei
+    #def build_Wvvvo(self,ccsd, t1=None,t2=None):
+    #    if t1 is None: t1 = self.t1
+    #    if t2 is None: t2 = self.t2
+#
+#        o = self.o
+#        v = self.v
+#
+#        tau = ccsd.build_tau(t1,t2)
+#
+#        W  = self.TEI[v,v,v,o].copy()
+#        W  = W - ndot('miab,me->abei',t2,self.Fov)
+#        W += ndot('if,abef->abei',t1,self.Wvvvv)
+#        W += ndot('mnab,mnei->abei',tau,self.TEI[o,o,v,o],prefactor=0.5)
+#
+#        Pab = ndot('miaf,mbef->abei',t2,self.TEI[o,v,v,v])
+#        temp_mbei = self.TEI[o,v,v,o].copy()
+#        temp_mbei = temp_mbei - ndot('nibf,mnef->mbei',t2,self.TEI[o,o,v,v])
+#        Pab += ndot('ma,mbei->abei',t1,temp_mbei)
+#        W -= Pab
+#        W += Pab.swapaxes(0,1)
+#        return W            # Wabei
 
 
     # Build 3-body intermediates
@@ -702,11 +814,9 @@ class CCLambda(object):
         self.Foo = self.transform_Foo(ccsd, F,t1,t2)
         self.Fvv = self.transform_Fvv(ccsd, F,t1,t2)
 
-        self.Woooo = self.transform_Woooo(ccsd, t1,t2)
-        self.Wvvvv = self.transform_Wvvvv(ccsd, t1,t2)
-        self.Wovvo = self.transform_Wovvo(ccsd, t1,t2)
+        self.Wvoov = self.transform_Wovvo(ccsd, t1,t2)
 
-        self.Wooov = self.build_Wooov(ccsd, t1,t2)
+        self.Wooov = self.build_Wooov(ccsd, F,t1,t2)
         self.Wvovv = self.build_Wvovv(ccsd, t1,t2)
         self.Wovoo = self.build_Wovoo(ccsd, t1,t2)
         self.Wvvvo = self.build_Wvvvo(ccsd, t1,t2)
@@ -719,7 +829,7 @@ class CCLambda(object):
         rhs_L1  = self.Fov.swapaxes(0,1).copy()
         rhs_L1 += ndot('ei,ea->ai',l1,self.Fvv)
         rhs_L1 -= ndot('am,im->ai',l1,self.Foo)
-        rhs_L1 += ndot('em,ieam->ai',l1,self.Wovvo)
+        rhs_L1 += ndot('em,eima->ai',l1,self.Wvoov)
         rhs_L1 += ndot('efim,efam->ai',l2,self.Wvvvo,prefactor=0.5)
         rhs_L1 -= ndot('aemn,iemn->ai',l2,self.Wovoo,prefactor=0.5)
         rhs_L1 -= ndot('ef,eifa->ai',Gvv,self.Wvovv)
@@ -739,7 +849,7 @@ class CCLambda(object):
 
         self.Woooo = self.transform_Woooo(ccsd, t1,t2)
         self.Wvvvv = self.transform_Wvvvv(ccsd, t1,t2)
-        self.Wovvo = self.transform_Wovvo(ccsd, t1,t2)
+        self.Wvoov = self.transform_Wovvo(ccsd, t1,t2)
 
         self.Wooov = self.build_Wooov(ccsd, t1,t2)
         self.Wvovv = self.build_Wvovv(ccsd, t1,t2)
@@ -772,7 +882,7 @@ class CCLambda(object):
         rhs_L2 -= Pab
         rhs_L2 += Pab.swapaxes(0,1)
 
-        Pijab = ndot('aeim,jebm->abij',l2,self.Wovvo)
+        Pijab = ndot('aeim,ejmb->abij',l2,self.Wvoov)
         rhs_L2 += Pijab
         rhs_L2 -= Pijab.swapaxes(0,1)
         rhs_L2 -= Pijab.swapaxes(2,3)
@@ -813,11 +923,14 @@ class CCLambda(object):
         rhs_L1  = self.Fov.swapaxes(0,1).copy()
         rhs_L1 += ndot('ei,ea->ai',l1,self.Fvv)
         rhs_L1 -= ndot('am,im->ai',l1,self.Foo)
-        rhs_L1 += ndot('em,ieam->ai',l1,self.Wovvo)
+        rhs_L1 += ndot('em,eima->ai',l1,self.Wvoov)
         rhs_L1 += ndot('efim,efam->ai',l2,self.Wvvvo,prefactor=0.5)
-        rhs_L1 -= ndot('aemn,iemn->ai',l2,self.Wovoo,prefactor=0.5)
-        rhs_L1 -= ndot('ef,eifa->ai',Gvv,self.Wvovv)
-        rhs_L1 -= ndot('mn,mina->ai',Goo,self.Wooov)
+        rhs_L1 -= ndot('aemn,mnie->ai',l2,self.Wooov,prefactor=0.5)
+        rhs_L1 -= ndot('ef,eifa->ai',Gvv,self.TEI[v,o,v,v])
+        rhs_L1 -= ndot('mn,mina->ai',Goo,self.TEI[o,o,o,v])
+        tmp  = ndot('fe,mf->me',Gvv,t1)
+        tmp -= ndot('mn,ne->me',Goo,t1)
+        rhs_L1 += ndot('me,imae->ai',tmp,self.TEI[o,o,v,v])
 
         #### Build RHS side of l2 equations
         rhs_L2 = self.TEI[v,v,o,o].copy()
@@ -833,15 +946,19 @@ class CCLambda(object):
         rhs_L2 += ndot('abmn,ijmn->abij',l2,self.Woooo,prefactor=0.5)
         rhs_L2 += ndot('efij,efab->abij',l2,self.Wvvvv,prefactor=0.5)
 
-        Pij = ndot('ei,ejab->abij',l1,self.Wvovv)
+        Pij = ndot('ei,ejab->abij',l1,self.TEI[v,o,v,v])
+        tmp = Goo + ndot('ej,me->mj',l1,t1)
+        Pij -= ndot('mj,imab->abij',tmp,self.TEI[o,o,v,v])
         rhs_L2 += Pij
         rhs_L2 -= Pij.swapaxes(2,3)
 
-        Pab = ndot('am,ijmb->abij',l1,self.Wooov)
+        Pab = ndot('am,ijmb->abij',l1,self.TEI[o,o,o,v])
+        tmp = Gvv - ndot('bm,me->be',l1,t1)
+        Pij -= ndot('be,ijae->abij',tmp,self.TEI[o,o,v,v])
         rhs_L2 -= Pab
         rhs_L2 += Pab.swapaxes(0,1)
 
-        Pijab = ndot('aeim,jebm->abij',l2,self.Wovvo)
+        Pijab = ndot('aeim,ejmb->abij',l2,self.Wvoov)
         rhs_L2 += Pijab
         rhs_L2 -= Pijab.swapaxes(0,1)
         rhs_L2 -= Pijab.swapaxes(2,3)
@@ -852,14 +969,6 @@ class CCLambda(object):
         rhs_L2 -= Pijab.swapaxes(0,1)
         rhs_L2 -= Pijab.swapaxes(2,3)
         rhs_L2 += Pijab.swapaxes(0,1).swapaxes(2,3)
-
-        Pab = ndot('be,ijae->abij',Gvv,self.TEI[o,o,v,v])
-        rhs_L2 += Pab
-        rhs_L2 -= Pab.swapaxes(0,1)
-
-        Pij = ndot('mj,imab->abij',Goo,self.TEI[o,o,v,v])
-        rhs_L2 -= Pij
-        rhs_L2 += Pij.swapaxes(2,3)
 
 
         ### Update T1 and T2 amplitudes
@@ -879,6 +988,68 @@ class CCLambda(object):
         e  = ndot('ai,ia->',l1,F[o,v])
         e += ndot('abij,ijab->',l2,self.TEI[o,o,v,v],prefactor=0.25)
         return e
+
+    def print_amplitudes(self):
+        # untile L1 for alpha/beta spin
+        l1 = self.l1.real.copy()
+        n = len(l1.shape)
+        for i in range(n):
+            l1 = np.delete(l1, list(range(1, l1.shape[i], 2)), axis=i)
+        # unpack tensor, remove zeros, sort and select top 10
+        l = np.ravel(l1)
+        l = sorted(l[np.nonzero(l)],key=abs,reverse=True)
+        if len(l) > 10:
+            l = l[:10]
+        # Disentangle degenerate amplitudes
+        indeces = []
+        amplitudes = []
+        for amplitude in l:
+            index = np.argwhere(l1==amplitude)
+            if index.shape[0]==1:
+                indeces.append(index[0])
+                amplitudes.append(amplitude)
+            else:
+                n = index.shape[0]
+                for i in range(n):
+                    if not next((True for elem in indeces if elem.size == index[i].size and np.allclose(elem, index[i])), False):
+                        indeces.append(index[i])
+                        amplitudes.append(amplitude)
+        Print(green+'Largest lambda(A,I) amplitudes'+end)
+        for i in range(len(amplitudes)):
+            index = indeces[i]
+            amplitude = amplitudes[i]
+            Print(cyan+'\t{:2d}{:2d}{:>24.10f}'.format(index[0]+1,index[1]+1,amplitude)+end)
+
+        # untile L2 for alpha/beta spin
+        l2 = self.l2.real.copy()
+        l2 = np.delete(l2, list(range(1, l2.shape[0], 2)), axis=0)
+        l2 = np.delete(l2, list(range(0, l2.shape[1], 2)), axis=1)
+        l2 = np.delete(l2, list(range(1, l2.shape[2], 2)), axis=2)
+        l2 = np.delete(l2, list(range(0, l2.shape[3], 2)), axis=3)
+        # unpack tensor, remove zeros, sort and select top 10
+        l = np.ravel(l2)
+        l = sorted(l[np.nonzero(l)],key=abs,reverse=True)
+        if len(l) > 10:
+            l = l[:10]
+        # Disentangle degenerate amplitudes
+        indeces = []
+        amplitudes = []
+        for amplitude in l:
+            index = np.argwhere(l2==amplitude)
+            if index.shape[0]==1:
+                indeces.append(index[0])
+                amplitudes.append(amplitude)
+            else:
+                n = index.shape[0]
+                for i in range(n):
+                    if not next((True for elem in indeces if elem.size == index[i].size and np.allclose(elem, index[i])), False):
+                        indeces.append(index[i])
+                        amplitudes.append(amplitude)
+        Print(green+'Largest lambda(A,b,I,j) amplitudes'+end)
+        for i in range(len(amplitudes)):
+            index = indeces[i]
+            amplitude = amplitudes[i]
+            Print(cyan+'\t{:2d}{:2d}{:2d}{:2d}{:>20.10f}'.format(index[0]+1,index[1]+1,index[2]+1,index[3]+1,amplitude)+end)
 
     def compute_lambda(self,maxiter=50,max_diis=8,start_diis=1):
         lambda_tstart = time.time()
@@ -911,6 +1082,8 @@ class CCLambda(object):
                 Print(yellow+"\n..The Lambda CCSD equations have converged in %.3f seconds" %(time.time()-lambda_tstart)+end)
                 Print(blue+'The lambda pseudo-energy is'+end)
                 Print(cyan+'\t%s \n' %e_ccsd_p+end)
+
+                self.print_amplitudes()
 
                 return
 

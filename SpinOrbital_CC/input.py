@@ -18,3 +18,12 @@ psi4.set_options({'basis': 'sto-3g'})
 psi4.set_options({'reference':'rhf'})
 
 rtcc()
+
+
+psi4.set_module_options('SCF', {'SCF_TYPE':'PK'})
+psi4.set_module_options('SCF', {'E_CONVERGENCE':1e-14})
+psi4.set_module_options('SCF', {'D_CONVERGENCE':1e-14})
+psi4.set_module_options('CCENERGY', {'E_CONVERGENCE':1e-14,'DIIS':8})
+psi4.set_module_options('CCLAMBDA', {'R_CONVERGENCE':1e-14})
+
+e_ccsd = psi4.properties('ccsd','dipole')

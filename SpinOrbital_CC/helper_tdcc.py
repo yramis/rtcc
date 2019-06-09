@@ -112,8 +112,8 @@ class rtcc(object):
 
         options = {
             'timestep'          : 0.1,
-            'number of steps'   : 100,
+            'number of steps'   : 10000,
             'timelength'        : np.inf,
-            'field amplitude'   : 0.002,
+            'field amplitude'   : 0.0002,
             'field frequency'   : 0.5}
-        td = RK4(ccsd,Lambda,prop,options)
+        #td = RK4(ccsd,Lambda,prop,options)

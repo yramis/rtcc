@@ -1,3 +1,53 @@
+# @BEGIN LICENSE
+#
+# RT-CC by Alexandre P. Bazante, a plugin to:
+#
+# Psi4: an open-source quantum chemistry software package
+#
+# Copyright (c) 2007-2018 The Psi4 Developers.
+#
+# The copyrights for code used from other parties are included in
+# the corresponding files.
+#
+# This file is part of Psi4.
+#
+# Psi4 is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as published by
+# the Free Software Foundation, version 3.
+#
+# Psi4 is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License along
+# with Psi4; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+#
+# @END LICENSE
+#
+#
+#   Real-time explicitly time dependent Coupled-Cluster Code
+#       -- written by Alexandre P. Bazante, 2017
+#
+
+"""
+This contains all the coupled-cluster machinery
+- CCSD Energy
+- CCSD Lambdas
+- CCSD Density and Dipole
+
+Reference: 
+1.  J. Gauss, J.F. Stanton, J. Chem. Phys. 103, 3561 (1995);
+    https://doi.org/10.1063/1.470240
+
+It assumes a closed-shell reference and C1 symmetry
+"""
+
+__authors__ = "Alexandre P. Bazante"
+__credits__ = [
+        "T.D. Crawford","Ashutosh Kumar","Alexandre P. Bazante"]
+
 import time,sys
 import contextlib
 import numpy as np
@@ -109,14 +159,14 @@ class CCEnergy(object):
         self.F      = contract('up,uv,vq->pq',self.npC,self.F,self.npC)
         self.TEI    = np.asarray(self.mints.mo_eri(self.C,self.C,self.C,self.C))
         self.TEI    = self.TEI.swapaxes(1,2)                # change indexing i,a,j,b -> i,j,a,b
+
+        # Overwrite H/F to match psi4numpy
+        H = np.einsum('uj,vi,uv', self.npC, self.npC, self.H)
+        self.F = H + 2.0 * np.einsum('pmqm->pq',self.TEI[:, self.o, :, self.o])
+        self.F -= np.einsum('pmmq->pq',self.TEI[:, self.o, self.o, :])
+
         # Two Electron Integrals are stored as (left out,right out | left in,right in)
         Print("Size of the ERI tensor is %4.2f GB, %d basis functions." % (ERI_size, self.nmo))
-
-        # Antisymmetrize the TEI
-        tmp         = self.TEI.copy()
-        self.VS     = tmp
-        self.VS    -= tmp.swapaxes(2,3)
-        self.V      = self.VS + self.TEI
 
         # Build denominators
         eps         = np.diag(self.F)
@@ -128,7 +178,6 @@ class CCEnergy(object):
 
         self.t1 = np.zeros((self.n_occ,self.n_virt)) + 1j*0.0                   # t1 (ia)   <- 0
         self.t2 = self.TEI[self.o,self.o,self.v,self.v] * self.Dijab + 1j*0.0   # t2 (iJaB) <- (ia|JB) * D(iJaB)
-        self.t2_aa = self.t2 - self.t2.swapaxes(0,1)
 
         Print(yellow+"\n..Initialized CCSD in %.3f seconds." %(time.time() - time_init)+end)
 
@@ -147,348 +196,361 @@ class CCEnergy(object):
 ##------------------------------------------------------
 ##  CCSD Procedures
 ##------------------------------------------------------
-##  Notation used in this code for the coupled cluster equations
+##  The equations follow reference 1, but are spin integrated
+##
 ##
 ##  i,j -> target occupied indeces
 ##  a,b -> target virtual indeces
 ##
-##  k,l -> implicit (summed-over) occupied indeces,   target index for intermediates
-##  c,d -> implicit (summed-over) virtual indeces,    target index for intermediates
+##  m,n,o -> implicit (summed-over) occupied indeces
+##  e,f,g -> implicit (summed-over) virtual indeces
 ##
-##  m,l -> implicit occupied indeces (in intermediates)
-##  e,f -> implicit occupied indeces (in intermediates)
-##
-##
-##  F,G: effective 1 particle intermediates
+##  F: effective 1-particle intermediate
 ##  W,Tau: effective 2 particle intermediates
-##      Fx (ex: F1, F2) x refers to the number of tilde
 ##
-##  In tensors, indeces are read from left to right, and bottom to top. <ab||ij> -> V(i,j,a,b)
-##      I apologize for the inconvenience that will inevitably ensue, I just like it better this way
-##  As much as possible, TEI indeces are reorganized so that the virtual ones are flushed right, for contraction efficiency
 ##
-##  t2      -> alpha/beta slice of T2 array     -> t2 (iJaB)
-##  t2_aa   -> alpha/alpha slice of T2 array    -> t2_aa (ijab) = t2 (iJaB) - t2 (iJbA) [RHF case]
+##  Because equations are spin integrated, we only compute the necessary spin combinations of amplitudes:
+##      t1  -> alpha block      -> t1 (ia)
+##      t2  -> alpha/beta block -> t2 (iJaB)
 ##
-##  All equations are spin integrated
 
     # Compute the effective two-particle excitation operators tau and tau tilde
     # Tau is used in the T2 amplitude equations and in the 2 particle intermediates W
     # Tau tilde is used in the 1 particle intermediates F
 
-    def build_tau(self):
-        tau = self.t2.copy()
-        tau = tau + ndot('ia,jb->ijab',self.t1,self.t1)
+    def build_tau(self, t1=None,t2=None):
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
+        tau = t2.copy()
+        tau = tau + ndot('ia,jb->ijab',t1,t1)
         return tau      # Tau (alpha/beta)
 
-    def build_tau_tilde(self):
-        tau = self.t2.copy()
-        tau = tau + ndot('ia,jb->ijab',self.t1,self.t1,prefactor=0.5)
+    def build_tau_tilde(self, t1=None,t2=None):
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
+        tau = t2.copy()
+        tau = tau + ndot('ia,jb->ijab',t1,t1,prefactor=0.5)
         return tau  # Tau tilde (alpha/beta)
 
 
     # Compute the effective Fock matrix
-    def build_Foo(self):
+    def build_Fmi(self, F=None,t1=None,t2=None):
+        if F  is None: F = self.F
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
         o = self.o
         v = self.v
         
-        Foo  = self.F[o,o].copy() + 1j*0.0
-        Foo += ndot('ke,ei->ik',self.t1,self.F[v,o],prefactor=0.5)
-        Foo += ndot('me,kmie->ik',self.t1,self.V[o,o,o,v])
-        Foo += ndot('imef,kmef->ik',self.build_tau_tilde(),self.TEI[o,o,v,v],prefactor=2)
-        Foo += ndot('imef,kmfe->ik',self.build_tau_tilde(),self.TEI[o,o,v,v],prefactor=-1)
-        return Foo      # Fmi
+        Fmi  = F[o,o].copy() + 1j*0.0
+        Fmi += ndot('ie,me->mi',t1,F[o,v],prefactor=0.5)
+        Fmi += ndot('ne,mnie->mi',t1,self.TEI[o,o,o,v],prefactor=2)
+        Fmi += ndot('ne,nmie->mi',t1,self.TEI[o,o,o,v],prefactor=-1)
+        Fmi += ndot('inef,mnef->mi',self.build_tau_tilde(t1,t2),self.TEI[o,o,v,v],prefactor=2)
+        Fmi += ndot('inef,mnfe->mi',self.build_tau_tilde(t1,t2),self.TEI[o,o,v,v],prefactor=-1)
+        return Fmi      # Fmi
 
-    def build_Fvv(self):
+    def build_Fae(self, F=None,t1=None,t2=None):
+        if F  is None: F = self.F
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
         o = self.o
         v = self.v
 
-        Fvv  = self.F[v,v].copy() + 1j*0.0
-        Fvv -= ndot('mc,am->ca',self.t1,self.F[v,o],prefactor=0.5)
-        Fvv += ndot('me,maec->ca',self.t1,self.V[o,v,v,v])
-        Fvv -= ndot('mnae,mnce->ca',self.build_tau_tilde(),self.TEI[o,o,v,v],prefactor=2)
-        Fvv -= ndot('mnae,mnec->ca',self.build_tau_tilde(),self.TEI[o,o,v,v],prefactor=-1)
-        return Fvv      # Fae
+        Fae  = self.F[v,v].copy() + 1j*0.0
+        Fae -= ndot('ma,me->ae',t1,F[o,v],prefactor=0.5)
+        Fae += ndot('mf,amef->ae',t1,self.TEI[v,o,v,v],prefactor=2)
+        Fae += ndot('mf,amfe->ae',t1,self.TEI[v,o,v,v],prefactor=-1)
+        Fae -= ndot('mnaf,mnef->ae',self.build_tau_tilde(t1,t2),self.TEI[o,o,v,v],prefactor=2)
+        Fae -= ndot('mnaf,mnfe->ae',self.build_tau_tilde(t1,t2),self.TEI[o,o,v,v],prefactor=-1)
+        return Fae      # Fae
 
-    def build_Fvo(self):
+    def build_Fme(self, F=None,t1=None):
+        if F  is None: F = self.F
+        if t1 is None: t1 = self.t1
+
         o = self.o
         v = self.v
 
-        Fvo  = self.F[v,o].copy() + 1j*0.0
-        Fvo += ndot('me,kmce->ck',self.t1,self.V[o,o,v,v])
-        return Fvo      # Fme
+        Fme  = F[o,v].copy() + 1j*0.0
+        Fme += ndot('nf,mnef->me',t1,self.TEI[o,o,v,v],prefactor=2)
+        Fme += ndot('nf,mnfe->me',t1,self.TEI[o,o,v,v],prefactor=-1)
+        return Fme      # Fme
 
 
     # Compute the 2-body intermediates W
-    def build_Woooo(self):
+    def build_Wmnij(self, t1=None,t2=None):
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
         o = self.o
         v = self.v
 
         W  = self.TEI[o,o,o,o].copy()   # V(ijkl)
-        W  = W + ndot('ijef,klef->ijkl',self.build_tau(),self.TEI[o,o,v,v])
+        W  = W + ndot('ijef,mnef->mnij',self.build_tau(t1,t2),self.TEI[o,o,v,v])
+        W += ndot('je,mnie->mnij',t1,self.TEI[o,o,o,v])
+        W += ndot('ie,mnej->mnij',t1,self.TEI[o,o,v,o])     ## test
         
-        tmp = ndot('je,klie->ijkl',self.t1,self.TEI[o,o,o,v])
-        W += tmp + tmp.swapaxes(0,1).swapaxes(2,3)
         return W           # Wmnij
 
-    def build_Z(self):      # Computes parts of Tau*Wvvvv to avoid computing Wvvvv
+    def build_Z(self, t1=None,t2=None):      # Computes parts of Tau*Wabef to avoid computing Wabef
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
         o = self.o
         v = self.v
 
-        Z = ndot('ijcd,ladc->ijal',self.build_tau(),self.TEI[o,v,v,v])
+        Z = ndot('ijef,mbef->mbij',self.build_tau(t1,t2),self.TEI[o,v,v,v])
         return Z
 
-    def build_Wvoov(self,string):
-        o = self.o
-        v = self.v
-        tmp = 0.5*self.t2_aa + ndot('je,mb->jmeb',self.t1,self.t1)
-        if string == 'ab':
-            W  = self.TEI[v,o,o,v].copy()    # V(cjkb)
-            W  = W + ndot('mjeb,kmce->cjkb',self.t2,self.VS[o,o,v,v],prefactor=0.5)
-            W  = W + ndot('je,kbce->cjkb',self.t1,self.TEI[o,v,v,v])
-            W -= ndot('mb,mkjc->cjkb',self.t1,self.TEI[o,o,o,v])
-            W -= ndot('jmeb,kmce->cjkb',tmp,self.TEI[o,o,v,v])
-            return W
-        elif string == 'aa':
-            W  = self.VS[v,o,o,v].copy()
-            W  = W + ndot('mjeb,kmce->cjkb',self.t2,self.TEI[o,o,v,v],prefactor=0.5)
-            W  = W + ndot('je,kbce->cjkb',self.t1,self.VS[o,v,v,v])
-            W -= ndot('mb,mkjc->cjkb',self.t1,self.VS[o,o,o,v])
-            W -= ndot('jmeb,kmce->cjkb',tmp,self.VS[o,o,v,v])
-            return W        # Wmbej
-        else:
-            Print(red+"build_Wvoov: string %s must be ab or aa." %string+end)
-            raise Exception
+    def build_Wmbej(self, t1=None,t2=None):
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
 
-    def build_Wvovo(self):
         o = self.o
         v = self.v
 
-        W  = self.TEI[v,o,v,o].copy()       # V(cjak)
-        W  = W + ndot('je,kaec->cjak',self.t1,self.TEI[o,v,v,v])
-        W -= ndot('ma,kmjc->cjak',self.t1,self.TEI[o,o,o,v])
-        tmp = 0.5*self.t2 + ndot('ma,je->mjae',self.t1,self.t1)
-        W -= ndot('mjae,mkce->cjak',tmp,self.TEI[o,o,v,v])
+        W  = self.TEI[o,v,v,o].copy()       # V(mbej)
+        W  = W + ndot('jf,mbef->mbej',t1,self.TEI[o,v,v,v])
+        W -= ndot('nb,mnej->mbej',t1,self.TEI[o,o,v,o])
+
+        tmp = 0.5 * t2 + ndot('jf,nb->jnfb',t1,t1)
+        W -= ndot('jnfb,mnef->mbej',tmp,self.TEI[o,o,v,v])
+        W += ndot('njfb,mnef->mbej',t2,self.TEI[o,o,v,v])
+        W -= ndot('njfb,mnfe->mbej',t2,self.TEI[o,o,v,v],prefactor=0.5)
+        return W        # Wmbej
+
+    # This intermediate appears in the spin factorization of Wmbej terms.
+    def build_Wmbje(self, t1=None,t2=None):
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
+        o = self.o
+        v = self.v
+
+        W  = -1.0 * self.TEI[o,v,o,v].copy()        # V(mbje)
+        W  = W - ndot('jf,mbfe->mbje',t1,self.TEI[o,v,v,v])
+        W += ndot('nb,mnje->mbje',t1,self.TEI[o,o,o,v])
+
+        tmp = 0.5 * t2 + ndot('jf,nb->jnfb',t1,t1)
+        W += ndot('jnfb,mnfe->mbje',tmp,self.TEI[o,o,v,v])
         return W        # Wmbje
 
-    # Update amplitudes
-    def update(self):
+
+    # Compute T1 and T2 residuals
+    def residual_t1(self, F,t1,t2):
         o = self.o
         v = self.v
 
-        Foo = self.build_Foo()
-        Fvv = self.build_Fvv()
-        Fvo = self.build_Fvo()
+        Fmi = self.build_Fmi(F,t1,t2)
+        Fae = self.build_Fae(F,t1,t2)
+        Fme = self.build_Fme(F,t1)
 
-        t1_new  = self.F[o,v].copy() + 1j*0.0
-        t1_new += ndot('ic,ca->ia',self.t1,Fvv)
-        t1_new -= ndot('ka,ik->ia',self.t1,Foo)
-        TS      = self.t2 + self.t2_aa
-        t1_new += ndot('ikac,ck->ia',TS,Fvo)
+        #### Build RHS side of t1 equations
+        rhs_t1  = F[o,v].copy() + 1j*0.0
+        rhs_t1 += ndot('ie,ae->ia',t1,Fae)
+        rhs_t1 -= ndot('ma,mi->ia',t1,Fmi)
+        rhs_t1 += ndot('imae,me->ia',t2,Fme,prefactor=2)
+        rhs_t1 += ndot('imea,me->ia',t2,Fme,prefactor=-1)
 
-        t1_new += ndot('ld,ladi->ia',self.t1,self.TEI[o,v,v,o],prefactor=2)
-        t1_new += ndot('ld,laid->ia',self.t1,self.TEI[o,v,o,v],prefactor=-1)
+        rhs_t1 += ndot('nf,nafi->ia',t1,self.TEI[o,v,v,o],prefactor=2)
+        rhs_t1 += ndot('nf,naif->ia',t1,self.TEI[o,v,o,v],prefactor=-1)
 
-        t1_new += ndot('ikcd,kadc->ia',self.t2,self.TEI[o,v,v,v],prefactor=2)
-        t1_new += ndot('ikdc,kadc->ia',self.t2,self.TEI[o,v,v,v],prefactor=-1)
+        rhs_t1 += ndot('imef,amef->ia',t2,self.TEI[o,v,v,v],prefactor=2)
+        rhs_t1 += ndot('imfe,amef->ia',t2,self.TEI[o,v,v,v],prefactor=-1)
 
-        t1_new -= ndot('klac,klic->ia',self.t2_aa,self.VS[o,o,o,v],prefactor=0.5)
-        t1_new -= ndot('klac,klic->ia',self.t2,self.TEI[o,o,o,v])
+        rhs_t1 -= ndot('mnae,mnie->ia',t2,self.TEI[o,o,o,v],prefactor=2)
+        rhs_t1 -= ndot('mnae,nmie->ia',t2,self.TEI[o,o,o,v],prefactor=-1)
+        return rhs_t1
 
-        tau     = self.build_tau()
-        tau1    = self.build_tau_tilde()
-        Woooo   = self.build_Woooo()
-        Z       = self.build_Z()
-        Wvoov_ab= self.build_Wvoov('ab')
-        Wvoov_aa= self.build_Wvoov('aa')
-        Wvovo   = self.build_Wvovo()
+    def residual_t2(self, F,t1,t2):
+        o = self.o
+        v = self.v
 
-        t2_new  = self.TEI[o,o,v,v].copy() + 1j*0.0
+        Fmi = self.build_Fmi(F,t1,t2)
+        Fae = self.build_Fae(F,t1,t2)
+        Fme = self.build_Fme(F,t1)
 
-        t2_new += ndot('klab,ijkl->ijab',tau,Woooo)
+        tau     = self.build_tau(t1,t2)
+        Wmnij   = self.build_Wmnij(t1,t2)
+        Z       = self.build_Z(t1,t2)
+        Wmbej   = self.build_Wmbej(t1,t2)
+        Wmbje   = self.build_Wmbje(t1,t2)
 
-        t2_new += ndot('ijcd,cdab->ijab',tau,self.TEI[v,v,v,v])
-        t2_new -= ndot('lb,ijal->ijab',self.t1,Z)
-        t2_new -= ndot('lb,ijal->jiba',self.t1,Z)
+        #### Build RHS side of t2 equations
+        rhs_t2  = self.TEI[o,o,v,v].copy() + 1j*0.0
 
-        tmp     = ndot('ikac,cjkb->ijab',self.t2,Wvoov_aa)
-        tmp    += ndot('ikac,cjkb->ijab',self.t2_aa,Wvoov_ab)
-        tmp    -= ndot('ikcb,cjak->ijab',self.t2,Wvovo)
+        rhs_t2 += ndot('mnab,mnij->ijab',tau,Wmnij)
+        rhs_t2 += ndot('ijef,abef->ijab',tau,self.TEI[v,v,v,v])
 
-        tmp    += ndot('ic,jcba->ijab',self.t1,self.TEI[o,v,v,v])
+        Pijab = -1.0 * ndot('ma,mbij->ijab',t1,Z)
 
-        tmp    -= ndot('ka,ijkb->ijab',self.t1,self.TEI[o,o,o,v])
-        tmp1    = Fvv-0.5*ndot('kb,ck->cb',self.t1,Fvo)
-        tmp    += ndot('ijac,cb->ijab',self.t2,tmp1)
-        tmp1    = Foo+0.5*ndot('jc,ck->jk',self.t1,Fvo)
-        tmp    -= ndot('ikab,jk->ijab',self.t2,tmp1)
-        t2_new += tmp + tmp.swapaxes(0,1).swapaxes(2,3)
+        tmp  = Fae - ndot('mb,me->be',t1,Fme,prefactor=0.5)
+        Pijab  += ndot('ijae,be->ijab',t2,tmp)
 
-        t2_new -= contract('ic,kb,jcka->ijab',self.t1,self.t1,self.TEI[o,v,o,v])
-        t2_new -= contract('ic,ka,cjkb->ijab',self.t1,self.t1,self.TEI[v,o,o,v])
-        t2_new -= contract('jc,ka,ickb->ijab',self.t1,self.t1,self.TEI[o,v,o,v])
-        t2_new -= contract('jc,kb,cika->ijab',self.t1,self.t1,self.TEI[v,o,o,v])
+        tmp  = Fmi + ndot('je,me->mj',t1,Fme,prefactor=0.5)
+        Pijab  -= ndot('imab,mj->ijab',t2,tmp)
 
-        self.t1 += t1_new*self.Dia
-        self.t2 += t2_new*self.Dijab
+        Pijab += ndot('imae,mbej->ijab',t2,Wmbej,prefactor=2)
+        Pijab -= ndot('imea,mbej->ijab',t2,Wmbej)
+        Pijab += ndot('imae,mbje->ijab',t2,Wmbje)
+        Pijab += ndot('mjae,mbie->ijab',t2,Wmbje)
+    
+        tmp = ndot('ie,ma->imea',t1,t1)
+        Pijab -= ndot('imea,mbej->ijab',tmp,self.TEI[o,v,v,o])
+        Pijab -= ndot('imeb,maje->ijab',tmp,self.TEI[o,v,o,v])
 
+        Pijab += ndot('ie,abej->ijab',t1,self.TEI[v,v,v,o])
+        Pijab -= ndot('ma,mbij->ijab',t1,self.TEI[o,v,o,o])
+
+        rhs_t2 += Pijab
+        rhs_t2 += Pijab.swapaxes(0,1).swapaxes(2,3)
+        return rhs_t2
+
+    # Update amplitudes
+    def update(self, F=None,t1=None,t2=None):
+        if F  is None: F = self.F
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
+        o = self.o
+        v = self.v
+
+        Fmi = self.build_Fmi(F,t1,t2)
+        Fae = self.build_Fae(F,t1,t2)
+        Fme = self.build_Fme(F,t1)
+
+        #### Build RHS side of t1 equations
+        rhs_t1  = F[o,v].copy() + 1j*0.0
+        rhs_t1 += ndot('ie,ae->ia',t1,Fae)
+        rhs_t1 -= ndot('ma,mi->ia',t1,Fmi)
+        rhs_t1 += ndot('imae,me->ia',t2,Fme,prefactor=2)
+        rhs_t1 += ndot('imea,me->ia',t2,Fme,prefactor=-1)
+
+        rhs_t1 += ndot('nf,nafi->ia',t1,self.TEI[o,v,v,o],prefactor=2)
+        rhs_t1 += ndot('nf,naif->ia',t1,self.TEI[o,v,o,v],prefactor=-1)
+
+        rhs_t1 += ndot('imef,amef->ia',t2,self.TEI[v,o,v,v],prefactor=2)
+        rhs_t1 += ndot('imfe,amef->ia',t2,self.TEI[v,o,v,v],prefactor=-1)
+
+        rhs_t1 -= ndot('mnae,mnie->ia',t2,self.TEI[o,o,o,v],prefactor=2)
+        rhs_t1 -= ndot('mnae,nmie->ia',t2,self.TEI[o,o,o,v],prefactor=-1)
+
+        tau     = self.build_tau(t1,t2)
+        Wmnij   = self.build_Wmnij(t1,t2)
+        Z       = self.build_Z(t1,t2)
+        Wmbej   = self.build_Wmbej(t1,t2)
+        Wmbje   = self.build_Wmbje(t1,t2)
+
+        #### Build RHS side of t2 equations
+        rhs_t2  = self.TEI[o,o,v,v].copy() + 1j*0.0
+
+        rhs_t2 += ndot('mnab,mnij->ijab',tau,Wmnij)
+        rhs_t2 += ndot('ijef,abef->ijab',tau,self.TEI[v,v,v,v])
+
+        Pijab = -1.0 * ndot('ma,mbij->ijab',t1,Z)
+
+        tmp  = Fae - ndot('mb,me->be',t1,Fme,prefactor=0.5)
+        Pijab  += ndot('ijae,be->ijab',t2,tmp)
+
+        tmp  = Fmi + ndot('je,me->mj',t1,Fme,prefactor=0.5)
+        Pijab  -= ndot('imab,mj->ijab',t2,tmp)
+
+        Pijab += ndot('imae,mbej->ijab',t2,Wmbej,prefactor=2)
+        Pijab -= ndot('imea,mbej->ijab',t2,Wmbej)
+        Pijab += ndot('imae,mbje->ijab',t2,Wmbje)
+        Pijab += ndot('mjae,mbie->ijab',t2,Wmbje)
+    
+        tmp = ndot('ie,ma->imea',t1,t1)
+        Pijab -= ndot('imea,mbej->ijab',tmp,self.TEI[o,v,v,o])
+        Pijab -= ndot('imeb,maje->ijab',tmp,self.TEI[o,v,o,v])
+
+        Pijab += ndot('ie,abej->ijab',t1,self.TEI[v,v,v,o])
+        Pijab -= ndot('ma,mbij->ijab',t1,self.TEI[o,v,o,o])
+
+        rhs_t2 += Pijab
+        rhs_t2 += Pijab.swapaxes(0,1).swapaxes(2,3)
+
+        self.t1 += rhs_t1*self.Dia
+        self.t2 += rhs_t2*self.Dijab
         return
 
-    # Split amplitude update into T1 and T2 functions (used for the time-propagation)
-    # Note that this compute the whole <Q|exp(-T) H exp(T)|0>, unlike update(self)
-    def update_t1(self,F,t1,t2):
+
+    def compute_corr_energy(self, F=None,t1=None,t2=None):
+        if F  is None: F = self.F
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
         o = self.o
         v = self.v
 
-        # Save current t1,t2,F
-        #t1_saved = self.t1.copy()
-        #t2_saved = self.t2.copy()
-        #F_saved  = self.F.copy()
-
-        # overwrite with input
-        self.t1 = t1.copy()
-        self.t2 = t2.copy()
-        self.F  = F.copy()
-        self.t2_aa = t2 - t2.swapaxes(2,3)
-
-        # Compute 1 particle intermediates
-        Foo = self.build_Foo()
-        Fvv = self.build_Fvv()
-        Fvo = self.build_Fvo()
-
-        # Solve T1 equation
-        t1_new  = self.F[o,v].copy() + 1j*0.0
-        t1_new += ndot('ic,ca->ia',self.t1,Fvv)
-        t1_new -= ndot('ka,ik->ia',self.t1,Foo)
-        TS      = self.t2 + self.t2_aa
-        t1_new += ndot('ikac,ck->ia',TS,Fvo)
-
-        t1_new += ndot('ld,ladi->ia',self.t1,self.TEI[o,v,v,o],prefactor=2)
-        t1_new += ndot('ld,laid->ia',self.t1,self.TEI[o,v,o,v],prefactor=-1)
-
-        t1_new += ndot('ikcd,kadc->ia',self.t2,self.TEI[o,v,v,v],prefactor=2)
-        t1_new += ndot('ikdc,kadc->ia',self.t2,self.TEI[o,v,v,v],prefactor=-1)
-
-        t1_new -= ndot('klac,klic->ia',self.t2_aa,self.VS[o,o,o,v],prefactor=0.5)
-        t1_new -= ndot('klac,klic->ia',self.t2,self.TEI[o,o,o,v])
-
-        # restore saved values
-        #self.t1 = t1_saved.copy()
-        #self.t2 = t2_saved.copy()
-        #self.F  = F_saved.copy()
-        #del t1_saved
-        #del t2_saved
-        #del F_saved
-
-        return t1_new
-
-    def residual_t1(self,F,t1,t2):
-        o = self.o
-        v = self.v
-
-        t2_aa   = t2 - t2.swapaxes(2,3)
-
-        #Build 1 particle intermediates
-        Foo = self.build_Foo()
-        Fvv = self.build_Fvv()
-        Fvo = self.build_Fvo()
-
-        # Solve T1 equation
-        r_t1    = F[o,v].copy() + 1j*0.0
-        r_t1   += ndot('ic,ca->ia',t1,Fvv)
-        r_t1   -= ndot('ka,ik->ia',t1,Foo)
-        TS      = t2 + t2_aa
-        r_t1   += ndot('ikac,ck->ia',TS,Fvo)
-
-        r_t1   += ndot('ld,ladi->ia',t1,self.TEI[o,v,v,o],prefactor=2)
-        r_t1   += ndot('ld,laid->ia',t1,self.TEI[o,v,o,v],prefactor=-1)
-
-        r_t1   += ndot('ikcd,kadc->ia',t2,self.TEI[o,v,v,v],prefactor=2)
-        r_t1   += ndot('ikdc,kadc->ia',t2,self.TEI[o,v,v,v],prefactor=-1)
-
-        r_t1   -= ndot('klac,klic->ia',t2_aa,self.VS[o,o,o,v],prefactor=0.5)
-        r_t1   -= ndot('klac,klic->ia',t2,self.TEI[o,o,o,v])
-
-        r_t1   -= t1*self.Dia
-
-        return r_t1
-
-
-
-    def update_t2(self,F,t1,t2):
-        o = self.o
-        v = self.v
-
-        # Save current t1,t2,F
-        #t1_saved = self.t1.copy()
-        #t2_saved = self.t2.copy()
-        #F_saved  = self.F.copy()
-
-        # overwrite with input
-        self.t1 = t1.copy()
-        self.t2 = t2.copy()
-        self.F  = F.copy()
-        self.t2_aa = t2 - t2.swapaxes(2,3)
-
-        # Compute 1 particle intermediates
-        Foo = self.build_Foo()
-        Fvv = self.build_Fvv()
-        Fvo = self.build_Fvo()
-
-        # Compute 2 particle intermediates
-        tau     = self.build_tau()
-        tau1    = self.build_tau_tilde()
-        Woooo   = self.build_Woooo()
-        Z       = self.build_Z()
-        Wvoov_ab= self.build_Wvoov('ab')
-        Wvoov_aa= self.build_Wvoov('aa')
-        Wvovo   = self.build_Wvovo()
-
-        # Solve T2 equation
-        t2_new  = self.TEI[o,o,v,v].copy() + 1j*0.0
-        t2_new  = t2_new + ndot('klab,ijkl->ijab',tau,Woooo)
-        t2_new += ndot('ijcd,cdab->ijab',tau,self.TEI[v,v,v,v])
-        t2_new -= ndot('lb,ijal->ijab',self.t1,Z)
-        t2_new -= ndot('lb,ijal->jiba',self.t1,Z)
-
-        tmp     = ndot('ikac,cjkb->ijab',self.t2,Wvoov_aa)
-        tmp    += ndot('ikac,cjkb->ijab',self.t2_aa,Wvoov_ab)
-        tmp    -= ndot('ikcb,cjak->ijab',self.t2,Wvovo)
-        tmp    += ndot('ic,jcba->ijab',self.t1,self.TEI[o,v,v,v])
-        tmp    -= ndot('ka,ijkb->ijab',self.t1,self.TEI[o,o,o,v])
-        tmp1    = Fvv-0.5*ndot('kb,ck->cb',self.t1,Fvo)
-        tmp    += ndot('ijac,cb->ijab',self.t2,tmp1)
-        tmp1    = Foo+0.5*ndot('jc,ck->jk',self.t1,Fvo)
-        tmp    -= ndot('ikab,jk->ijab',self.t2,tmp1)
-        t2_new += tmp + tmp.swapaxes(0,1).swapaxes(2,3)
-
-        t2_new -= contract('ic,kb,jcka->ijab',self.t1,self.t1,self.TEI[o,v,o,v])
-        t2_new -= contract('ic,ka,cjkb->ijab',self.t1,self.t1,self.TEI[v,o,o,v])
-        t2_new -= contract('jc,ka,ickb->ijab',self.t1,self.t1,self.TEI[o,v,o,v])
-        t2_new -= contract('jc,kb,cika->ijab',self.t1,self.t1,self.TEI[v,o,o,v])
-
-        # restore saved values
-        #self.t1 = t1_saved.copy()
-        #self.t2 = t2_saved.copy()
-        #self.F  = F_saved.copy()
-        #del t1_saved
-        #del t2_saved
-        #del F_saved
-
-        return t2_new
-
-    def compute_corr_energy(self):
-        o = self.o
-        v = self.v
-        e = ndot('ijab,abij->',self.build_tau(),self.V[v,v,o,o]).real
-        self.e_ccsd = e
-        self.E_ccsd = e + self.e_scf
+        e  = ndot('ia,ia->',F[o,v],t1)
+        e += ndot('ijab,abij->',self.build_tau(t1,t2),self.TEI[v,v,o,o],prefactor=2)
+        e += ndot('ijab,abji->',self.build_tau(t1,t2),self.TEI[v,v,o,o],prefactor=-1)
+        self.e_ccsd = e.real
+        self.E_ccsd = e.real + self.e_scf
         return e
     
+    def print_amplitudes(self):
+        t1 = self.t1.real.copy()
+        # unpack tensor, remove zeros, sort and select top 10
+        t = np.ravel(t1)
+        t = sorted(t[np.nonzero(t)],key=abs,reverse=True)
+        if len(t) > 10:
+            t = t[:10]
+        # Disentangle degenerate amplitudes
+        indeces = []
+        amplitudes = []
+        for amplitude in t:
+            index = np.argwhere(t1==amplitude)
+            if index.shape[0]==1:
+                indeces.append(index[0])
+                amplitudes.append(amplitude)
+            else:
+                n = index.shape[0]
+                for i in range(n):
+                    if not next((True for elem in indeces if elem.size == index[i].size and np.allclose(elem, index[i])), False):
+                        indeces.append(index[i])
+                        amplitudes.append(amplitude)
+        Print(green+'Largest t(I,A) amplitudes'+end)
+        for i in range(len(amplitudes)):
+            index = indeces[i]
+            amplitude = amplitudes[i]
+            Print(cyan+'\t{:2d}{:2d}{:>24.10f}'.format(index[0]+1,index[1]+1,amplitude)+end)
+
+        t2 = self.t2.real.copy()
+        # unpack tensor, remove zeros, sort and select top 10
+        t = np.ravel(t2)
+        t = sorted(t[np.nonzero(t)],key=abs,reverse=True)
+        if len(t) > 10:
+            t = t[:10]
+        # Disentangle degenerate amplitudes
+        indeces = []
+        amplitudes = []
+        for amplitude in t:
+            index = np.argwhere(t2==amplitude)
+            if index.shape[0]==1:
+                indeces.append(index[0])
+                amplitudes.append(amplitude)
+            else:
+                n = index.shape[0]
+                for i in range(n):
+                    if not next((True for elem in indeces if elem.size == index[i].size and np.allclose(elem, index[i])), False):
+                        indeces.append(index[i])
+                        amplitudes.append(amplitude)
+        Print(green+'Largest t(I,j,A,b) amplitudes'+end)
+        for i in range(len(amplitudes)):
+            index = indeces[i]
+            amplitude = amplitudes[i]
+            Print(cyan+'\t{:2d}{:2d}{:2d}{:2d}{:>20.10f}'.format(index[0]+1,index[1]+1,index[2]+1,index[3]+1,amplitude)+end)
+
     def compute_ccsd(self,maxiter=50,max_diis=8,start_diis=1):
         ccsd_tstart = time.time()
         
-        self.e_mp2 = self.compute_corr_energy()
+        self.e_mp2 = self.compute_corr_energy().real
 
         Print('\n\t  Summary of iterative solution of the CC equations')
         Print('\t------------------------------------------------------')
@@ -509,7 +571,7 @@ class CCEnergy(object):
             e_old = self.e_ccsd
 
             self.update()
-            e_ccsd = self.compute_corr_energy()
+            e_ccsd = self.compute_corr_energy().real
             rms = e_ccsd - e_old
             Print('\t{:4d}{:26.15f}{:15.5E}   DIIS={:d}' .format(iter,e_ccsd,rms,diis_object.diis_size))
 
@@ -521,6 +583,10 @@ class CCEnergy(object):
                 Print(blue+'The ccsd correlation energy is'+end)
                 Print(cyan+'\t%s \n' %e_ccsd+end)
 
+                self.print_amplitudes()
+                self.t1 = np.around(self.t1,decimals=10)
+                self.t2 = np.around(self.t2,decimals=10)
+
                 return
 
             #  Add the new error vector
@@ -529,222 +595,35 @@ class CCEnergy(object):
             if iter >= start_diis:
                 self.t1, self.t2 = diis_object.extrapolate(self.t1, self.t2)
 
-            self.t2_aa = self.t2 - self.t2.swapaxes(0,1)
             # End CCSD iterations
     # End CCEnergy class
 
 
-class CCHbar(object):
-    def __init__(self,ccsd,F=[],t1=[],t2=[],memory=2):  # ccsd input must be ccsd = CCEnergy(mol, memory=x)
-        if F==[]:
-            Print(yellow+"\nInitializing Hbar object..."+end)
-
-        # Start timer
-        time_init = time.time()
-
-        # Read relevant data from ccsd class
-        self.n_occ  = ccsd.n_occ
-        self.n_virt = ccsd.n_virt
-        self.o      = ccsd.o
-        self.v      = ccsd.v
-
-        self.TEI    = ccsd.TEI
-        if F==[]:
-            self.F  = ccsd.F
-        else:
-            self.F  = F
-        if t1==[]:
-            self.t1 = ccsd.t1
-        else:
-            self.t1 = t1
-        if t2==[]:
-            self.t2 = ccsd.t2
-        else:
-            self.t2 = t2
-        self.t2_aa  = self.t2 - self.t2.swapaxes(2,3)
-
-        # Antisymmetrize the TEI
-        tmp         = self.TEI.copy()
-        self.VS     = tmp
-        self.VS    -= tmp.swapaxes(2,3)
-        self.V      = self.VS + self.TEI
-
-        # Build persistent intermediates
-        self.tau        = ccsd.build_tau()
-
-        self.build_Hoo()
-        self.build_Hvv()
-        self.build_Hvo()
-
-        # 0
-        self.build_Hoooo()
-        self.build_Hvvvv()
-        self.build_Hovov()
-        self.build_Hovvo()
-        # -1
-        self.build_Hovoo()
-        self.build_Hvvvo()
-        # +1 
-        self.build_Hooov()
-        self.build_Hvovv()
-
-        if F==[]:
-            Print(yellow+"\n..Hbar built in %.3f seconds\n" %(time.time()-time_init)+end)
-
-    # 1-body Hbar
-    def build_Hoo(self):
-        o = self.o
-        v = self.v
-
-        self.Hoo  = self.F[o,o].copy()
-        self.Hoo  = self.Hoo +  ndot('ie,ej->ij',self.t1,self.F[v,o])
-        self.Hoo += ndot('me,jmie->ij',self.t1,self.V[o,o,o,v])
-        self.Hoo += ndot('imef,jmef->ij',self.tau,self.V[o,o,v,v])
-        return self.Hoo
-
-    def build_Hvv(self):
-        o = self.o
-        v = self.v
-
-        self.Hvv  = self.F[v,v].copy()
-        self.Hvv  = self.Hvv - ndot('mb,am->ab',self.t1,self.F[v,o])
-        self.Hvv += ndot('me,mbea->ab',self.t1,self.V[o,v,v,v])
-        self.Hvv -= ndot('mnbe,mnae->ab',self.tau,self.V[o,o,v,v])
-        return self.Hvv
-
-    def build_Hvo(self):
-        o = self.o
-        v = self.v
-
-        self.Hvo  = self.F[v,o].copy()
-        self.Hvo  = self.Hvo + ndot('me,imae->ai',self.t1,self.V[o,o,v,v])
-        return self.Hvo
-
-    # 2-body hbar
-    # 0 excitation rank
-    def build_Hoooo(self):  # alpha/beta/alpha/beta
-        o = self.o
-        v = self.v
-
-        self.Hoooo  = self.TEI[o,o,o,o].copy()
-        self.Hoooo  = self.Hoooo + ndot('je,klie->ijkl',self.t1,self.TEI[o,o,o,v],prefactor=2)
-        self.Hoooo += ndot('ijef,klef->ijkl',self.tau,self.TEI[o,o,v,v])
-        return self.Hoooo
-
-    def build_Hvvvv(self):  # alpha/beta/alpha/beta
-        o = self.o
-        v = self.v
-
-        self.Hvvvv  = self.TEI[v,v,v,v].copy()
-        self.Hvvvv  = self.Hvvvv - ndot('md,mcba->abcd',self.t1,self.TEI[o,v,v,v],prefactor=2)
-        self.Hvvvv += ndot('mncd,mnab->abcd',self.tau,self.TEI[o,o,v,v])
-        return self.Hvvvv
-
-    def build_Hovov(self):
-        o = self.o
-        v = self.v
-
-        self.Hovov  = self.TEI[o,v,o,v].copy()
-        self.Hovov  = self.Hovov - ndot('mb,jmia->iajb',self.t1,self.TEI[o,o,o,v])
-        self.Hovov += ndot('ie,jbea->iajb',self.t1,self.TEI[o,v,v,v]) 
-        self.Hovov -= ndot('imeb,jmea->iajb',self.tau,self.TEI[o,o,v,v])
-        return self.Hovov
-
-    def build_Hovvo(self):  # alpha/beta/alpha/beta # exchange
-        o = self.o
-        v = self.v
-
-        self.Hovvo  = self.TEI[o,v,v,o].copy()
-        self.Hovvo  = self.Hovvo - ndot('ma,mjib->ibaj',self.t1,self.TEI[o,o,o,v])
-        self.Hovvo += ndot('ie,jabe->ibaj',self.t1,self.TEI[o,v,v,v])
-        self.Hovvo -= ndot('imea,mjeb->ibaj',self.tau,self.TEI[o,o,v,v])
-        self.Hovvo += ndot('imae,mjeb->ibaj',self.t2,self.V[o,o,v,v])
-        return self.Hovvo
-
-    # -1 excitation rank
-    def build_Hovoo(self):  # alpha/beta/alpha/beta
-        o = self.o
-        v = self.v
-
-        self.Hovoo  = self.TEI[o,v,o,o].copy()
-        self.Hovoo  = self.Hovoo + ndot('ke,ijea->kaij',self.t1,self.TEI[o,o,v,v])
-        return self.Hovoo
-
-    def build_Hvvvo(self):  # alpha/beta/alpha/beta
-        o = self.o
-        v = self.v
-
-        self.Hvvvo  = self.TEI[v,v,v,o].copy()
-        self.Hvvvo  = self.Hvvvo - ndot('mc,miab->abci',self.t1,self.TEI[o,o,v,v])
-        return self.Hvvvo
-
-    # +1 excitation rank
-    def build_Hooov(self):  # alpha/beta/alpha/beta
-        o = self.o
-        v = self.v
-
-        self.Hooov  = self.TEI[o,o,o,v].copy()
-        self.Hooov  = self.Hooov - ndot('ma,ijkm->ijka',self.t1,self.TEI[o,o,o,o])
-        self.Hooov += ndot('je,ieka->ijka',self.t1,self.TEI[o,v,o,v])
-        self.Hooov += ndot('ie,ejka->ijka',self.t1,self.TEI[v,o,o,v])
-
-        self.Hooov += ndot('ijea,ek->ijka',self.t2,self.F[v,o])
-
-        self.Hooov += ndot('ijef,kaef->ijka',self.tau,self.TEI[o,v,v,v])
-        self.Hooov -= ndot('imea,mkje->ijka',self.tau,self.TEI[o,o,o,v])
-        self.Hooov -= ndot('jmea,kmie->ijka',self.tau,self.TEI[o,o,o,v])
-        self.Hooov += ndot('jmae,kmie->ijka',self.t2,self.V[o,o,o,v])
-
-        tmp         = ndot('mf,kmef->ek',self.t1,self.V[o,o,v,v])
-        self.Hooov += ndot('ijea,ek->ijka',self.t2,tmp)
-
-        tmp         = ndot('ijef,kmef->ijkm',self.tau,self.TEI[o,o,v,v])
-        self.Hooov -= ndot('ijkm,ma->ijka',tmp,self.t1)
-
-        tmp         = ndot('ie,kmef->ifkm',self.t1,self.V[o,o,v,v])
-        self.Hooov += ndot('jmaf,ifkm->ijka',self.t2,tmp)
-        tmp         = ndot('ie,kmef->ifkm',self.t1,self.TEI[o,o,v,v])
-        self.Hooov -= ndot('jmfa,ifkm->ijka',self.t2,tmp)
-        tmp         = ndot('jf,kmef->ejkm',self.t1,self.TEI[o,o,v,v])
-        self.Hooov -= ndot('imea,ejkm->ijka',self.t2,tmp)
-        return self.Hooov
-
-    def build_Hvovv(self):  # alpha/beta/alpha/beta
-        o = self.o
-        v = self.v
-
-        self.Hvovv  = self.TEI[v,o,v,v].copy()
-        self.Hvovv  = self.Hvovv + ndot('ie,ceab->ciab',self.t1,self.TEI[v,v,v,v])
-        self.Hvovv -= ndot('mb,ciam->ciab',self.t1,self.TEI[v,o,v,o])
-        self.Hvovv -= ndot('ma,cimb->ciab',self.t1,self.TEI[v,o,o,v])
-
-        self.Hvovv -= ndot('miab,cm->ciab',self.t2,self.F[v,o])
-
-        self.Hvovv += ndot('mnab,nmic->ciab',self.tau,self.TEI[o,o,o,v])
-        self.Hvovv -= ndot('miae,mbce->ciab',self.tau,self.TEI[o,v,v,v])
-        self.Hvovv -= ndot('mibe,maec->ciab',self.tau,self.TEI[o,v,v,v])
-        self.Hvovv += ndot('mieb,maec->ciab',self.t2,self.V[o,v,v,v])
-
-        tmp         = ndot('ne,mnce->cm',self.t1,self.V[o,o,v,v])
-        self.Hvovv -= ndot('miab,cm->ciab',self.t2,tmp)
-
-        tmp         = ndot('mnab,mnce->ceab',self.tau,self.TEI[o,o,v,v])
-        self.Hvovv += ndot('ie,ceab->ciab',self.t1,tmp)
-
-        tmp         = ndot('ma,mnce->cean',self.t1,self.V[o,o,v,v])
-        self.Hvovv -= ndot('inbe,cean->ciab',self.t2,tmp)
-        tmp         = ndot('ma,mnce->cean',self.t1,self.TEI[o,o,v,v])
-        self.Hvovv += ndot('ineb,cean->ciab',self.t2,tmp)
-        tmp         = ndot('nb,mnce->cemb',self.t1,self.TEI[o,o,v,v])
-        self.Hvovv += ndot('imea,cemb->ciab',self.t2,tmp)
-        return self.Hvovv
-
-
-
 class CCLambda(object):
-    def __init__(self,ccsd,hbar):
+    def __init__(self,ccsd):
         Print(yellow+"\nInitializing Lambda object..."+end)
 
+##------------------------------------------------------
+##  CCSD Lambda equations
+##------------------------------------------------------
+##
+##  The equations follow reference 1, but are spin integrated using the unitary group approach.
+##
+##  i,j -> target occupied indeces
+##  a,b -> target virtual indeces
+##
+##  m,n,o -> implicit (summed-over) occupied indeces
+##  e,f,g -> implicit (summed-over) virtual indeces
+##
+##  G: effective 1-particle intermediate
+##  W,Tau: effective 2 particle intermediates
+##
+##
+##  Because equations are spin integrated, we only compute the necessary spin combinations of amplitudes:
+##      l1  -> alpha block      -> l1 (ai)
+##      l2  -> alpha/beta block -> l2 (aBiJ)
+##
+
         # Start timer
         time_init = time.time()
 
@@ -755,179 +634,307 @@ class CCLambda(object):
         self.v      = ccsd.v
 
         self.TEI    = ccsd.TEI
-        #self.F      = ccsd.F
-        self.Dia    = ccsd.Dia.swapaxes(0,1)
-        self.Dijab  = ccsd.Dijab.swapaxes(0,2).swapaxes(1,3)
+        #self.Dia    = ccsd.Dia.swapaxes(0,1)
+        #self.Dijab  = ccsd.Dijab.swapaxes(0,2).swapaxes(1,3)
+        self.Dia    = ccsd.Dia
+        self.Dijab  = ccsd.Dijab
         self.t1     = ccsd.t1
         self.t2     = ccsd.t2
+        self.F      = ccsd.F
 
-        # Antisymmetrize the TEI
-        tmp         = self.TEI.copy()
-        self.VS     = tmp
-        self.VS    -= tmp.swapaxes(2,3)
-        self.V      = self.VS + self.TEI
+        # Initialize l1 and l2 to the transpose of t1 and t2 respectively
+        #self.l1     = self.t1.swapaxes(0,1).copy()
+        #self.l2     = self.t2.swapaxes(0,2).swapaxes(1,3).copy()
+        self.l1     = 2*self.t1.copy()
+        self.l2     = 4*self.t2.copy()
+        self.l2    -= 2*self.t2.swapaxes(2,3)
 
-        self.tau    = hbar.tau
-        self.Hoo    = hbar.Hoo
-        self.Hvv    = hbar.Hvv
-        self.Hvo    = hbar.Hvo
+        # Build intermediates independent of Lambda
+        #   the following Hbar elements are similar to CCSD intermediates; in spin orpbitals, they are easily obtained from the CCSD intermediates directly
+        #   When spin integrated, it's easier to recompute them from scratch.
+        self.Fme = ccsd.build_Fme()
+        self.Fmi = self.build_Fmi(ccsd)
+        self.Fae = self.build_Fae(ccsd)
 
-        # 0
-        self.Hoooo  = hbar.Hoooo
-        self.Hvvvv  = hbar.Hvvvv
-        self.Hovov  = hbar.Hovov
-        self.Hovvo  = hbar.Hovvo
-        # -1
-        self.Hovoo  = hbar.Hovoo
-        self.Hvvvo  = hbar.Hvvvo
-        # +1 
-        self.Hooov  = hbar.Hooov
-        self.Hvovv  = hbar.Hvovv
+        self.Wmnij = ccsd.build_Wmnij()
+        self.Wabef = self.build_Wabef(ccsd)
+        self.Wmbej = self.build_Wmbej(ccsd)
+        self.Wmbje = self.build_Wmbje(ccsd)
 
-        self.l1     = self.t1.swapaxes(0,1).copy()
-        self.l1    *= 2.0
-        tmp         = self.t2.copy()
-        self.l2     = 2.0*(2.0*tmp - tmp.swapaxes(2,3))
-        self.l2     = self.l2.swapaxes(0,2).swapaxes(1,3)
+        #   the following Hbar elements have to be computed from scratch as they don't correspond to transformed CCSD intermediates.
+        self.Wmnie = self.build_Wmnie(ccsd)
+        self.Wamef = self.build_Wamef(ccsd)
+        self.Wmbij = self.build_Wmbij(ccsd)
+        self.Wabei = self.build_Wabei(ccsd)
 
-    def build_Goo(self):
-        Goo = - ndot('mjef,efmi->ij',self.t2,self.l2)
-        return Goo
+        #np.set_printoptions(precision=12,linewidth=200,suppress=True)
 
-    def build_Gvv(self):
-        Gvv = ndot('mnea,ebmn->ab',self.t2,self.l2)
-        return Gvv
 
-    def update(self):
+    # Build the Hbar intermediates
+    def build_Fmi(self,ccsd, F=None,t1=None,t2=None):       #   < m | Hbar | i >
+        if F  is None: F = self.F
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
+        o = self.o
+        v = self.v
+        
+        Fmi  = F[o,o].copy() + 1j*0.0
+        Fmi += ndot('ie,me->mi',t1,F[o,v])
+        Fmi += ndot('ne,mnie->mi',t1,self.TEI[o,o,o,v],prefactor=2)
+        Fmi += ndot('ne,nmie->mi',t1,self.TEI[o,o,o,v],prefactor=-1)
+        Fmi += ndot('inef,mnef->mi',ccsd.build_tau(t1,t2),self.TEI[o,o,v,v],prefactor=2)
+        Fmi += ndot('inef,mnfe->mi',ccsd.build_tau(t1,t2),self.TEI[o,o,v,v],prefactor=-1)
+        return Fmi      # Fmi
+
+    def build_Fae(self,ccsd, F=None,t1=None,t2=None):       #   < a | Hbar | e >
+        if F  is None: F = self.F
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
         o = self.o
         v = self.v
 
-        Goo = self.build_Goo()
-        Gvv = self.build_Gvv()
+        Fae  = F[v,v].copy() + 1j*0.0
+        Fae -= ndot('ma,me->ae',t1,F[o,v])
+        Fae += ndot('mf,amef->ae',t1,self.TEI[v,o,v,v],prefactor=2)
+        Fae += ndot('mf,amfe->ae',t1,self.TEI[v,o,v,v],prefactor=-1)
+        Fae -= ndot('mnfa,mnfe->ae',ccsd.build_tau(t1,t2),self.TEI[o,o,v,v],prefactor=2)
+        Fae -= ndot('mnfa,mnef->ae',ccsd.build_tau(t1,t2),self.TEI[o,o,v,v],prefactor=-1)
+        return Fae      # Fae
 
-        l1_new  = 2*self.Hvo.copy()
+    def build_Wabef(self,ccsd, t1=None,t2=None):            #   < ab | Hbar | ef >
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
 
-        l1_new += ndot('ei,ae->ai',self.l1,self.Hvv)
-        l1_new -= ndot('am,mi->ai',self.l1,self.Hoo)
+        o = self.o
+        v = self.v
 
-        l1_new += ndot('em,maei->ai',self.l1,self.Hovvo,prefactor=2)
-        l1_new -= ndot('em,maie->ai',self.l1,self.Hovov)
+        tau = ccsd.build_tau(t1,t2)
 
-        l1_new += ndot('efim,amef->ai',self.l2,self.Hvovv)
-        l1_new -= ndot('aemn,mnie->ai',self.l2,self.Hooov)
+        W = self.TEI[v,v,v,v].copy() + 1j*0.0
+        W += ndot('mnab,mnef->abef',tau,self.TEI[o,o,v,v])
+        W -= ndot('mb,amef->abef',t1,self.TEI[v,o,v,v])
+        W -= ndot('ma,bmfe->abef',t1,self.TEI[v,o,v,v])
+        return W        # Wabef
 
-        l1_new += ndot('ef,eafi->ai',Gvv,self.Hvvvo,prefactor=2)
-        l1_new -= ndot('ef,aefi->ai',Gvv,self.Hvvvo)
-        l1_new += ndot('mn,mani->ai',Goo,self.Hovoo,prefactor=2)
-        l1_new -= ndot('mn,main->ai',Goo,self.Hovoo)
+    def build_Wmbej(self,ccsd, t1=None,t2=None):            #   < mb | Hbar | ej >
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
+        o = self.o
+        v = self.v
+
+        tau = ccsd.build_tau(t1,t2)
+
+        W  = self.TEI[o,v,v,o].copy() + 1j*0.0
+        W += ndot('jnbf,nmfe->mbej',t2,self.TEI[o,o,v,v],prefactor=2)
+        W += ndot('jnbf,nmef->mbej',t2,self.TEI[o,o,v,v],prefactor=-1)
+        W -= ndot('jnfb,nmfe->mbej',tau,self.TEI[o,o,v,v])
+        W += ndot('jf,mbef->mbej',t1,self.TEI[o,v,v,v])
+        W -= ndot('nb,mnej->mbej',t1,self.TEI[o,o,v,o])
+        return W        # Wmbej
+
+    def build_Wmbje(self,ccsd, t1=None,t2=None):            #   < mb | Hbar | je >
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
+        o = self.o
+        v = self.v
+
+        tau = ccsd.build_tau(t1,t2)
+
+        W  = self.TEI[o,v,o,v].copy() + 1j*0.0
+        W -= ndot('jnfb,nmef->mbje',tau,self.TEI[o,o,v,v])
+        W += ndot('jf,bmef->mbje',t1,self.TEI[v,o,v,v])
+        W -= ndot('nb,mnje->mbje',t1,self.TEI[o,o,o,v])
+        return W        # Wmbje
 
 
-        l2_new  = self.V[v,v,o,o].copy()
+    def build_Wmnie(self,ccsd, t1=None,t2=None):            #   < mn | Hbar | ie >
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
 
-        l2_new  = l2_new + ndot('ai,bj->abij',self.l1,self.Hvo,prefactor=2)
-        l2_new -= ndot('aj,bi->abij',self.l1,self.Hvo)
+        o = self.o
+        v = self.v
 
-        l2_new -= ndot('bm,maji->abij',self.l1,self.Hovoo,prefactor=2)    # check sym
-        l2_new += ndot('bm,maij->abij',self.l1,self.Hovoo)
-        l2_new += ndot('ei,abej->abij',self.l1,self.Hvvvo,prefactor=2)
-        l2_new -= ndot('ei,baej->abij',self.l1,self.Hvvvo)
+        W  = self.TEI[o,o,o,v].copy() + 1j*0.0
+        W += ndot('if,mnfe->mnie',t1,self.TEI[o,o,v,v])
+        return W        # Wmnie
 
-        l2_new -= ndot('abim,mj->abij',self.l2,self.Hoo)
-        l2_new += ndot('aeij,be->abij',self.l2,self.Hvv)
+    def build_Wamef(self,ccsd, t1=None,t2=None):            #   < am | Hbar | ef >
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
 
-        l2_new += ndot('abmn,mnij->abij',self.l2,self.Hoooo,prefactor=0.5)
-        l2_new += ndot('efij,abef->abij',self.l2,self.Hvvvv,prefactor=0.5)
+        o = self.o
+        v = self.v
 
-        l2_new += ndot('ebmj,maei->abij',self.l2,self.Hovvo,prefactor=2)
-        l2_new -= ndot('ebmj,maie->abij',self.l2,self.Hovov)
-        l2_new -= ndot('ebmi,maej->abij',self.l2,self.Hovvo)
-        l2_new -= ndot('ebim,maje->abij',self.l2,self.Hovov)
+        W  = self.TEI[v,o,v,v].copy() + 1j*0.0
+        W -= ndot('na,nmef->amef',t1,self.TEI[o,o,v,v])
+        return W        # Wamef
 
-        l2_new -= ndot('ea,ijeb->abij',Gvv,self.V[o,o,v,v])
-        l2_new += ndot('im,mjab->abij',Goo,self.V[o,o,v,v])
+    def build_Wmbij(self,ccsd, F=None,t1=None,t2=None):     #   < mb | Hbar | ij >
+        if F is None: F = self.F
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
 
-        self.l1 += l1_new*self.Dia
+        o = self.o
+        v = self.v
 
-        tmp     = l2_new
-        tmp     += l2_new.swapaxes(0,1).swapaxes(2,3)
+        tau = ccsd.build_tau(t1,t2)
+
+        W  = self.TEI[o,v,o,o].copy() + 1j*0.0
+        W += ndot('mnfe,if->iemn',t2,self.Fme)
+        W -= ndot('oe,iomn->iemn',t1,self.Wmnij)
+        W += ndot('mnfg,iefg->iemn',tau,self.TEI[o,v,v,v])
+
+        W += ndot('noef,iomf->iemn',t2,self.TEI[o,o,o,v],prefactor=2)
+        W += ndot('noef,oimf->iemn',t2,self.TEI[o,o,o,v],prefactor=-1)
+        W -= ndot('nofe,iomf->iemn',t2,self.TEI[o,o,o,v])
+        W -= ndot('mofe,iofn->iemn',t2,self.TEI[o,o,v,o])
+
+        W += ndot('mf,iefn->iemn',t1,self.TEI[o,v,v,o])
+        W += ndot('nf,iemf->iemn',t1,self.TEI[o,v,o,v])
+
+        tmp = ndot('njbf,mnef->mbej',t2,self.TEI[o,o,v,v])
+        W -= ndot('mf,iefn->iemn',t1,tmp)
+        tmp = ndot('njbf,mnfe->mbje',t2,self.TEI[o,o,v,v])
+        W -= ndot('nf,iemf->iemn',t1,tmp)
+        tmp  = ndot('njfb,mnef->mbej',t2,self.TEI[o,o,v,v],prefactor=2)
+        tmp += ndot('njfb,mnfe->mbej',t2,self.TEI[o,o,v,v],prefactor=-1)
+        W += ndot('mf,iefn->iemn',t1,tmp)
+        return W        # Wmbij
+
+    def build_Wabei(self,ccsd, F=None,t1=None,t2=None):     #   < ab | Hbar | ei >
+        if F is None: F = self.F
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+
+        o = self.o
+        v = self.v
+
+        tau = ccsd.build_tau(t1,t2)
+
+        W  = self.TEI[v,v,v,o].copy() + 1j*0.0
+        W -= ndot('mnfe,na->efam',t2,self.Fme)
+        W += ndot('mg,efag->efam',t1,self.Wabef)
+        W += ndot('noef,amno->efam',tau,self.TEI[v,o,o,o])
+
+        W += ndot('mnfg,enag->efam',t2,self.TEI[v,o,v,v],prefactor=2)
+        W += ndot('mnfg,enga->efam',t2,self.TEI[v,o,v,v],prefactor=-1)
+        W -= ndot('mngf,enag->efam',t2,self.TEI[v,o,v,v])
+        W -= ndot('mnge,nfag->efam',t2,self.TEI[o,v,v,v])
+
+        W -= ndot('ne,nfam->efam',t1,self.TEI[o,v,v,o])
+        W -= ndot('nf,enam->efam',t1,self.TEI[v,o,v,o])
+
+        tmp = ndot('njbf,mnef->mbej',t2,self.TEI[o,o,v,v])
+        W += ndot('ne,nfam->efam',t1,tmp)
+        tmp = ndot('njbf,nmef->bmej',t2,self.TEI[o,o,v,v])
+        W += ndot('nf,enam->efam',t1,tmp)
+        tmp  = ndot('njfb,mnef->mbej',t2,self.TEI[o,o,v,v],prefactor=2)
+        tmp += ndot('njfb,mnfe->mbej',t2,self.TEI[o,o,v,v],prefactor=-1)
+        W -= ndot('ne,nfam->efam',t1,tmp)
+        return W        # Wabei
+
+
+    # Build Lambda intermediates
+    def build_Gmi(self, t2=None,l2=None):
+        if t2 is None: t2 = self.t2
+        if l2 is None: l2 = self.l2
+
+        Gmi = ndot('mnef,inef->mi',t2,l2)
+        return Gmi
+
+    def build_Gae(self, t2=None,l2=None):
+        if t2 is None: t2 = self.t2
+        if l2 is None: l2 = self.l2
+
+        Gae = - ndot('mnef,mnaf->ae',t2,l2)
+        return Gae
+
+
+    # Compute L1 residual
+    def residual_l1(self,ccsd, F,t1,t2,l1,l2):
+        o = self.o
+        v = self.v
+
+        rhs_l1  = self.Fov.swapaxes(0,1).copy()
+
+        return rhs_l1
+
+    def update(self, F=None,t1=None,t2=None,l1=None,l2=None):
+        if F is None: F = self.F
+        if t1 is None: t1 = self.t1
+        if t2 is None: t2 = self.t2
+        if l1 is None: l1 = self.l1
+        if l2 is None: l2 = self.l2
+
+        o = self.o
+        v = self.v
+
+        Gmi = self.build_Gmi(t2,l2)
+        Gae = self.build_Gae(t2,l2)
+        
+        #### Build RHS side of l1 equations
+        rhs_l1  = 2*self.Fme.copy()
+
+        rhs_l1 -= ndot('ma,im->ia',l1,self.Fmi)
+        rhs_l1 += ndot('ie,ea->ia',l1,self.Fae)
+
+        rhs_l1 += ndot('me,ieam->ia',l1,self.Wmbej,prefactor=2)
+        rhs_l1 += ndot('me,iema->ia',l1,self.Wmbje,prefactor=-1)
+
+        rhs_l1 -= ndot('mnae,iemn->ia',l2,self.Wmbij)
+        rhs_l1 += ndot('imef,efam->ia',l2,self.Wabei)
+
+        rhs_l1 -= ndot('mn,mina->ia',Gmi,self.Wmnie,prefactor=2)
+        rhs_l1 -= ndot('mn,imna->ia',Gmi,self.Wmnie,prefactor=-1)
+        rhs_l1 -= ndot('ef,eifa->ia',Gae,self.Wamef,prefactor=2)
+        rhs_l1 -= ndot('ef,eiaf->ia',Gae,self.Wamef,prefactor=-1)
+
+
+        #### Build RHS side of l2 equations
+        rhs_l2  = 2*self.TEI[o,o,v,v] - self.TEI[o,o,v,v].swapaxes(2,3) + 1j*0.0
+
+        rhs_l2 += ndot('ia,jb->ijab',l1,self.Fme,prefactor=2)
+        rhs_l2 += ndot('ja,ib->ijab',l1,self.Fme,prefactor=-1)
+
+        rhs_l2 -= ndot('mjab,im->ijab',l2,self.Fmi)
+        rhs_l2 += ndot('ijeb,ea->ijab',l2,self.Fae)
+
+        rhs_l2 += ndot('mnab,ijmn->ijab',l2,self.Wmnij,prefactor=0.5)
+        rhs_l2 += ndot('ijef,efab->ijab',l2,self.Wabef,prefactor=0.5)
+
+        rhs_l2 += ndot('ie,ejab->ijab',l1,self.Wamef,prefactor=2)
+        rhs_l2 += ndot('ie,ejba->ijab',l1,self.Wamef,prefactor=-1)
+
+        rhs_l2 -= ndot('mb,jima->ijab',l1,self.Wmnie,prefactor=2)
+        rhs_l2 -= ndot('mb,ijma->ijab',l1,self.Wmnie,prefactor=-1)
+
+        rhs_l2 += ndot('mjeb,ieam->ijab',l2,self.Wmbej,prefactor=2)
+        rhs_l2 += ndot('mjeb,iema->ijab',l2,self.Wmbje,prefactor=-1)
+        rhs_l2 -= ndot('mieb,jeam->ijab',l2,self.Wmbej)
+        rhs_l2 -= ndot('mibe,jema->ijab',l2,self.Wmbje)
+
+        rhs_l2 -= ndot('mi,mjab->ijab',Gmi,self.TEI[o,o,v,v],prefactor=2)
+        rhs_l2 -= ndot('mi,mjba->ijab',Gmi,self.TEI[o,o,v,v],prefactor=-1)
+        rhs_l2 += ndot('ae,ijeb->ijab',Gae,self.TEI[o,o,v,v],prefactor=2)
+        rhs_l2 += ndot('ae,ijbe->ijab',Gae,self.TEI[o,o,v,v],prefactor=-1)
+
+        self.l1 += rhs_l1*self.Dia
+
+        tmp  = rhs_l2
+        tmp += rhs_l2.swapaxes(0,1).swapaxes(2,3)
         self.l2 += tmp*self.Dijab
 
         return
-
-    # Split amplitude update into T1 and T2 functions (used for the time-propagation)
-    def update_l1(self,hbar,t1,t2,l1,l2):
-        o = self.o
-        v = self.v
-
-        self.t1 = t1.copy()
-        self.t2 = t2.copy()
-        self.l1 = l1.copy()
-        self.l2 = l2.copy()
-
-        Goo = self.build_Goo()
-        Gvv = self.build_Gvv()
-
-        l1_new  = 2*hbar.Hvo.copy()
-
-        l1_new += ndot('ei,ae->ai',self.l1,hbar.Hvv)
-        l1_new -= ndot('am,mi->ai',self.l1,hbar.Hoo)
-
-        l1_new += ndot('em,maei->ai',self.l1,hbar.Hovvo,prefactor=2)
-        l1_new -= ndot('em,maie->ai',self.l1,hbar.Hovov)
-
-        l1_new += ndot('efim,amef->ai',self.l2,hbar.Hvovv)
-        l1_new -= ndot('aemn,mnie->ai',self.l2,hbar.Hooov)
-
-        l1_new += ndot('ef,eafi->ai',Gvv,hbar.Hvvvo,prefactor=2)
-        l1_new -= ndot('ef,aefi->ai',Gvv,hbar.Hvvvo)
-        l1_new += ndot('mn,mani->ai',Goo,hbar.Hovoo,prefactor=2)
-        l1_new -= ndot('mn,main->ai',Goo,hbar.Hovoo)
-
-        return l1_new
-
-    def update_l2(self,hbar,t1,t2,l1,l2):
-        o = self.o
-        v = self.v
-
-        self.t1 = t1.copy()
-        self.t2 = t2.copy()
-        self.l1 = l1.copy()
-        self.l2 = l2.copy()
-
-        Goo = self.build_Goo()
-        Gvv = self.build_Gvv()
-
-        l2_new  = self.V[v,v,o,o].copy()
-
-        l2_new  = l2_new + ndot('ai,bj->abij',self.l1,hbar.Hvo,prefactor=2)
-        l2_new -= ndot('aj,bi->abij',self.l1,hbar.Hvo)
-
-        l2_new -= ndot('bm,maji->abij',self.l1,hbar.Hovoo,prefactor=2)    # check sym
-        l2_new += ndot('bm,maij->abij',self.l1,hbar.Hovoo)
-        l2_new += ndot('ei,abej->abij',self.l1,hbar.Hvvvo,prefactor=2)
-        l2_new -= ndot('ei,baej->abij',self.l1,hbar.Hvvvo)
-
-        l2_new -= ndot('abim,mj->abij',self.l2,hbar.Hoo)
-        l2_new += ndot('aeij,be->abij',self.l2,hbar.Hvv)
-
-        l2_new += ndot('abmn,mnij->abij',self.l2,hbar.Hoooo,prefactor=0.5)
-        l2_new += ndot('efij,abef->abij',self.l2,hbar.Hvvvv,prefactor=0.5)
-
-        l2_new += ndot('ebmj,maei->abij',self.l2,hbar.Hovvo,prefactor=2)
-        l2_new -= ndot('ebmj,maie->abij',self.l2,hbar.Hovov)
-        l2_new -= ndot('ebmi,maej->abij',self.l2,hbar.Hovvo)
-        l2_new -= ndot('ebim,maje->abij',self.l2,hbar.Hovov)
-
-        l2_new -= ndot('ea,ijeb->abij',Gvv,self.V[o,o,v,v])
-        l2_new += ndot('im,mjab->abij',Goo,self.V[o,o,v,v])
-
-        return l2_new
 
     def compute_pseudoenergy(self):
         o = self.o
         v = self.v
         
-        e = ndot('abij,ijab->',self.l2,self.TEI[o,o,v,v],prefactor=0.5).real
+        e = ndot('ijab,ijab->',self.l2,self.TEI[o,o,v,v],prefactor=0.5).real
         return e
 
     def compute_lambda(self,maxiter=50,max_diis=8,start_diis=1):
